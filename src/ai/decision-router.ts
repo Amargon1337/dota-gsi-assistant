@@ -59,11 +59,20 @@ export class DecisionRouter extends EventEmitter implements SessionResettable {
   }
 
   public evaluateTrigger(trigger: DecisionTrigger): RoutingEvaluation {
-    const config = ConfigManager.get();
     const now = Date.now();
     const currentSessionMatchId = GameSessionManager.getInstance().getCurrentMatchId();
 
-    // 1. Stale / cross-match check: ensure trigger belongs to active match
+    // 1. HARD POLICY INVARIANT: Gemini is strictly manual-only.
+    // Every trigger that is not priority === 'MANUAL' and category === 'manual' is rejected unconditionally.
+    if (trigger.priority !== 'MANUAL' || trigger.category !== 'manual') {
+      return {
+        allowed: false,
+        reason: 'Gemini is manual-only',
+        trigger,
+      };
+    }
+
+    // 2. Stale / cross-match check: ensure trigger belongs to active match
     if (trigger.matchId && currentSessionMatchId && trigger.matchId !== currentSessionMatchId) {
       return {
         allowed: false,
@@ -72,44 +81,12 @@ export class DecisionRouter extends EventEmitter implements SessionResettable {
       };
     }
 
-    // 2. Auto-coach gating: only manual triggers bypass autoCoachEnabled=false
-    if (trigger.priority !== 'MANUAL' && !config.autoCoachEnabled) {
-      return {
-        allowed: false,
-        reason: 'Autonomous coach is disabled in configuration',
-        trigger,
-      };
-    }
-
-    // 3. Category cooldown check
-    const lastCategoryTime = this.lastCategoryTimes.get(trigger.category) || 0;
-    const requiredCooldownSec = this.categoryCooldowns[trigger.category] ?? 15;
-    const elapsedSinceCategory = (now - lastCategoryTime) / 1000;
-
-    if (trigger.priority !== 'MANUAL' && elapsedSinceCategory < requiredCooldownSec) {
-      return {
-        allowed: false,
-        reason: `Category '${trigger.category}' cooldown active (${elapsedSinceCategory.toFixed(1)}s < ${requiredCooldownSec}s)`,
-        trigger,
-      };
-    }
-
-    // 4. Global rate limit check (throttle seconds from config)
-    const throttleSec = config.rateLimitSeconds || 15;
+    // 3. Debounce rapid manual spam clicks (min 2 seconds between clicks)
     const elapsedSinceGlobal = (now - this.lastGlobalCallTime) / 1000;
-
-    // CRITICAL triggers can bypass up to 50% of the throttle if needed, but not rapid spam (< 5s)
-    const minRequiredElapsed =
-      trigger.priority === 'MANUAL'
-        ? 0
-        : trigger.priority === 'CRITICAL'
-        ? Math.min(5, throttleSec / 2)
-        : throttleSec;
-
-    if (elapsedSinceGlobal < minRequiredElapsed) {
+    if (elapsedSinceGlobal < 2) {
       return {
         allowed: false,
-        reason: `Global rate limit active (${elapsedSinceGlobal.toFixed(1)}s < ${minRequiredElapsed}s)`,
+        reason: `Manual request rate limit active (${elapsedSinceGlobal.toFixed(1)}s < 2.0s)`,
         trigger,
       };
     }

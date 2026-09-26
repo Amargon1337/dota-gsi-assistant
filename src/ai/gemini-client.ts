@@ -6,8 +6,9 @@ export { StrategicPlanResult, GeminiErrorCode };
 export class GeminiClient {
   public static async generateStrategicPlan(
     model: SharedWorldModel,
-    triggerReason: string
+    triggerReason: string,
+    invocationType: 'manual' | string = 'manual'
   ): Promise<StrategicPlanResult> {
-    return GeminiGateway.generateStrategicPlan(model, triggerReason);
+    return GeminiGateway.generateStrategicPlan(model, triggerReason, invocationType);
   }
 }

@@ -12,6 +12,7 @@ import { GameSessionManager } from '../src/engine/game-session';
 import { StateManager } from '../src/gsi/state-manager';
 import { EventEngine } from '../src/engine/event-engine';
 import { AdvisorService } from '../src/ai/advisor-service';
+import { LayaClient } from '../src/ai/laya-client';
 import { ConfigManager } from '../src/ai/ai-config';
 import { GsiRawPayload } from '../src/types/gsi';
 import { createInitialWorldModel, StrategicPlan } from '../src/engine/world-model';
@@ -311,77 +312,81 @@ test('J. Continuous Plan Evaluation (detects standing in danger zone on tick)', 
   assert.equal(plan.status, 'violated');
 });
 
-test('K. Decision Router Priority Tiers & Category Cooldowns', () => {
+test('K. Decision Router Invariant: Strictly rejects all non-MANUAL triggers', () => {
   const router = DecisionRouter.getInstance();
   router.reset();
 
-  const cfg = ConfigManager.get();
-  cfg.autoCoachEnabled = true;
+  const currentMatch = GameSessionManager.getInstance().getCurrentMatchId();
 
-  const trigger1: DecisionTrigger = {
-    id: 'trig_1',
-    priority: 'CRITICAL',
-    category: 'plan_violated',
-    reason: 'План нарушен',
+  const categories: Array<DecisionTrigger['category']> = [
+    'plan_violated',
+    'hero_death',
+    'plan_completed',
+    'roshan',
+    'tactical_escalation',
+    'item_power_spike',
+  ];
+
+  // All automated / non-manual triggers must be rejected unconditionally
+  for (const cat of categories) {
+    const trigger: DecisionTrigger = {
+      id: `trig_${cat}`,
+      priority: cat === 'plan_violated' ? 'CRITICAL' : 'HIGH',
+      category: cat,
+      reason: `Automated event for ${cat}`,
+      clockTime: 300,
+      matchId: currentMatch,
+    };
+    const evaluation = router.evaluateTrigger(trigger);
+    assert.equal(evaluation.allowed, false);
+    assert.equal(evaluation.reason, 'Gemini is manual-only');
+  }
+
+  // Cross-match manual trigger rejected
+  const crossMatchTrigger: DecisionTrigger = {
+    id: 'trig_wrong_match',
+    priority: 'MANUAL',
+    category: 'manual',
+    reason: 'Manual request from previous match',
     clockTime: 300,
-    matchId: GameSessionManager.getInstance().getCurrentMatchId(),
+    matchId: 'stale_match_9999',
   };
-
-  // 1st trigger should be accepted
-  const eval1 = router.evaluateTrigger(trigger1);
-  assert.equal(eval1.allowed, true);
-  router.recordTriggerAccepted(trigger1);
-
-  // Rapid 2nd trigger of same category should be blocked by cooldown
-  const trigger2: DecisionTrigger = {
-    id: 'trig_2',
-    priority: 'CRITICAL',
-    category: 'plan_violated',
-    reason: 'План снова нарушен',
-    clockTime: 305,
-    matchId: GameSessionManager.getInstance().getCurrentMatchId(),
-  };
-
-  const eval2 = router.evaluateTrigger(trigger2);
-  assert.equal(eval2.allowed, false);
-  assert.ok(eval2.reason?.includes('cooldown'));
+  const evalStale = router.evaluateTrigger(crossMatchTrigger);
+  assert.equal(evalStale.allowed, false);
+  assert.ok(evalStale.reason?.includes('stale match'));
 });
 
-test('L. Decision Router autoCoachEnabled Gating', () => {
+test('L. Decision Router Manual Trigger Acceptance & Click Debounce', () => {
   const router = DecisionRouter.getInstance();
   router.reset();
 
-  const cfg = ConfigManager.get();
-  cfg.autoCoachEnabled = false; // Autonomous coach disabled
+  const currentMatch = GameSessionManager.getInstance().getCurrentMatchId();
 
-  const autoTrigger: DecisionTrigger = {
-    id: 'auto_trig',
-    priority: 'HIGH',
-    category: 'roshan',
-    reason: 'Рошан пал',
-    clockTime: 500,
-    matchId: GameSessionManager.getInstance().getCurrentMatchId(),
-  };
-
-  const evalAuto = router.evaluateTrigger(autoTrigger);
-  assert.equal(evalAuto.allowed, false);
-  assert.ok(evalAuto.reason?.includes('disabled'));
-
-  // Manual trigger must be allowed even when autoCoach is false
   const manualTrigger: DecisionTrigger = {
-    id: 'manual_trig',
+    id: 'manual_1',
     priority: 'MANUAL',
     category: 'manual',
     reason: 'Игрок нажал кнопку',
     clockTime: 500,
-    matchId: GameSessionManager.getInstance().getCurrentMatchId(),
+    matchId: currentMatch,
   };
 
   const evalManual = router.evaluateTrigger(manualTrigger);
   assert.equal(evalManual.allowed, true);
+  router.recordTriggerAccepted(manualTrigger);
 
-  // Restore
-  cfg.autoCoachEnabled = true;
+  // Rapid second click (< 2 seconds) must be debounced
+  const rapidClick: DecisionTrigger = {
+    id: 'manual_2',
+    priority: 'MANUAL',
+    category: 'manual',
+    reason: 'Быстрый повторный клик',
+    clockTime: 501,
+    matchId: currentMatch,
+  };
+  const evalRapid = router.evaluateTrigger(rapidClick);
+  assert.equal(evalRapid.allowed, false);
+  assert.ok(evalRapid.reason?.includes('rate limit'));
 });
 
 test('M. Gemini Gateway Schema Validator', () => {
@@ -627,3 +632,212 @@ test('R. SharedWorldModel observationMode & Heuristic Networth Curve Baseline', 
   assert.equal(calculateExpectedNetworth(300), calculateHeuristicNetworthCurve(300));
   assert.equal(calculateExpectedNetworth(900), calculateHeuristicNetworthCurve(900));
 });
+
+test('S. Gemini Gateway Invariant: Rejects non-manual invocation (MANUAL_ONLY) without budget or HTTP', async () => {
+  const originalFetch = global.fetch;
+  let fetchCalled = false;
+  global.fetch = (async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200, json: async () => ({}) } as any;
+  }) as any;
+
+  const bm = GeminiBudgetManager.getInstance();
+  const initialUsed = bm.getStatus().rpmUsed;
+  const model = createInitialWorldModel();
+
+  try {
+    // Non-manual invocation rejected immediately
+    const autoResult = await GeminiGateway.generateStrategicPlan(model, 'Auto test', 'automated');
+    assert.equal(autoResult.success, false);
+    assert.equal(autoResult.error, 'MANUAL_ONLY');
+    assert.equal(fetchCalled, false);
+    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+
+    const eventResult = await GeminiGateway.generateStrategicPlan(model, 'Plan violated', 'plan_violated');
+    assert.equal(eventResult.success, false);
+    assert.equal(eventResult.error, 'MANUAL_ONLY');
+    assert.equal(fetchCalled, false);
+    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('T. Background Pipeline Invariant: Laya critical risk & game events produce 0 Gemini calls', async () => {
+  const originalFetch = global.fetch;
+  let geminiCalls = 0;
+  let layaCalls = 0;
+
+  // Intercept fetch: Laya endpoint returns critical risk, Gemini endpoint counts calls
+  global.fetch = (async (url: string | URL | Request) => {
+    const urlStr = url.toString();
+    if (urlStr.includes('googleapis.com') || urlStr.includes('generativelanguage')) {
+      geminiCalls++;
+      return { ok: true, status: 200, json: async () => ({}) } as any;
+    }
+    // Laya request
+    layaCalls++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        answers: {
+          tactical_action: { choice: 'retreat', answer_confidence: 0.95 },
+          gank_risk: { choice: 'critical', probabilities: { critical: 0.9, safe: 0.05 } },
+          plan_safety: { choice: 'critical_violation' },
+        },
+      }),
+    } as any;
+  }) as any;
+
+  try {
+    GameSessionManager.getInstance().fullReset('match_zero_gemini');
+    const advisor = AdvisorService.getInstance();
+    const stateMgr = new StateManager();
+
+    // Set an active plan to test plan violation
+    const activePlan: StrategicPlan = {
+      id: 'plan_zero_gemini',
+      createdAtClock: 100,
+      priority: 'Фарм',
+      targetObjective: 'Фарм',
+      targetItem: 'BKB',
+      goldNeededForItem: 2000,
+      avoidZones: ['Enemy Triangle'],
+      safeZones: ['Base'],
+      guidanceText: 'Фармите аккуратно',
+      certainty: 0.9,
+      status: 'active',
+    };
+    advisor.getWorldModel().strategy.activePlan = activePlan;
+
+    // Simulate game state where player is in danger zone + died
+    const dangerousPayload: GsiRawPayload = {
+      provider: { name: 'Dota 2', appid: 570, version: 1, timestamp: 123456 },
+      map: { clock_time: 200, matchid: 'match_zero_gemini', game_state: 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS' },
+      player: { team_name: 'radiant', gold: 1000, net_worth: 1000 },
+      hero: { name: 'npc_dota_hero_juggernaut', level: 5, alive: false, health: 0, max_health: 1000, xpos: 2000, ypos: 2000 },
+    };
+
+    stateMgr.update(dangerousPayload);
+    await advisor.onGameStateUpdate(dangerousPayload, stateMgr.getLatestState());
+
+    // Give background promises a microtick to resolve
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Zero calls to Gemini API must be made!
+    assert.equal(geminiCalls, 0, 'Gemini must never be called on background events or Laya critical risk');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('U. High-Volume Invariant: 100 consecutive Laya inferences produce 0 Gemini HTTP requests', async () => {
+  const originalFetch = global.fetch;
+  let geminiCalls = 0;
+  let layaCalls = 0;
+
+  global.fetch = (async (url: string | URL | Request) => {
+    const urlStr = url.toString();
+    if (urlStr.includes('googleapis.com') || urlStr.includes('generativelanguage')) {
+      geminiCalls++;
+      return { ok: true, status: 200, json: async () => ({}) } as any;
+    }
+    layaCalls++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        answers: {
+          tactical_action: { choice: 'farm_safe', answer_confidence: 0.8 },
+          gank_risk: { choice: 'safe', probabilities: { safe: 0.85 } },
+          plan_safety: { choice: 'safe' },
+        },
+      }),
+    } as any;
+  }) as any;
+
+  try {
+    const model = createInitialWorldModel();
+    model.player.heroCleanName = 'Juggernaut';
+
+    for (let i = 0; i < 100; i++) {
+      model.meta.clockTime = 100 + i;
+      const result = await LayaClient.evaluateWorldModel(model);
+      assert.ok(result.available);
+    }
+
+    assert.equal(layaCalls, 100);
+    assert.equal(geminiCalls, 0, '100 Laya inferences must produce exactly 0 Gemini requests');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('V. AdvisorService.askManualQuestion() operates through manual pipeline', async () => {
+  const originalFetch = global.fetch;
+  const cfg = ConfigManager.get();
+  const origKey = cfg.geminiApiKey;
+  cfg.geminiApiKey = 'test_valid_key';
+
+  const bm = GeminiBudgetManager.getInstance();
+  bm.reset(15, 500);
+  const initialUsed = bm.getStatus().rpmUsed;
+
+  const validPlanPayload = {
+    priority: 'Фармить BKB перед Рошаном',
+    targetObjective: 'Защита и контест Рошана',
+    targetItem: 'Black King Bar',
+    goldNeededForItem: 1400,
+    avoidZones: ['Enemy Jungle'],
+    safeZones: ['Radiant Triangle'],
+    guidanceText: 'Сконцентрируйтесь на фарме треугольника для завершения BKB.',
+    certainty: 0.9,
+  };
+
+  let geminiCalls = 0;
+  global.fetch = (async (url: string | URL | Request) => {
+    const urlStr = url.toString();
+    if (urlStr.includes('googleapis.com') || urlStr.includes('generativelanguage')) {
+      geminiCalls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify(validPlanPayload) }],
+              },
+            },
+          ],
+        }),
+      } as any;
+    }
+    return { ok: true, status: 200, json: async () => ({}) } as any;
+  }) as any;
+
+  try {
+    GameSessionManager.getInstance().fullReset('match_manual_test');
+    const advisor = AdvisorService.getInstance();
+    const model = advisor.getWorldModel();
+    model.meta.matchId = 'match_manual_test';
+    model.meta.clockTime = 600;
+    model.player.heroCleanName = 'Juggernaut';
+    model.player.inventory = ['item_boots'];
+
+    // Manual call
+    const planResult = await advisor.askManualQuestion('Что делать в мидгейме?');
+    assert.equal(planResult.success, true);
+    assert.equal(geminiCalls, 1);
+    assert.equal(bm.getStatus().rpmUsed, initialUsed + 1);
+
+    // Verify model has activePlan updated
+    assert.equal(model.strategy.activePlan?.targetItem, 'Black King Bar');
+    assert.equal(model.strategy.activePlan?.priority, 'Фармить BKB перед Рошаном');
+  } finally {
+    global.fetch = originalFetch;
+    cfg.geminiApiKey = origKey;
+  }
+});
+

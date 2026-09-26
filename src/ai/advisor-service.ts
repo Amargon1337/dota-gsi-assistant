@@ -29,52 +29,9 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     // Register with GameSessionManager for atomic resets across matches
     GameSessionManager.getInstance().registerComponent(this);
 
-    // Wire EventEngine semantic events
+    // Wire EventEngine semantic events for dashboard stream (NOT for Gemini)
     this.eventEngine.on('event', (ev) => {
       this.emit('semantic_event', ev);
-    });
-
-    // Wire Decision Router events for autonomous coaching
-    this.eventEngine.on('plan_violated', (plan: StrategicPlan) => {
-      const model = this.worldModelStore.getModel();
-      const trigger: DecisionTrigger = {
-        id: `violation_${Date.now()}`,
-        priority: 'CRITICAL',
-        category: 'plan_violated',
-        reason: `План «${plan.priority}» нарушен! Причина: ${plan.violationReason || 'опасная зона'}`,
-        clockTime: model.meta.clockTime,
-        matchId: model.meta.matchId,
-        metadata: { planId: plan.id },
-      };
-      this.handleRouterTrigger(trigger);
-    });
-
-    this.eventEngine.on('hero_death', (deathInfo: { clock: number; respawnSeconds: number }) => {
-      const model = this.worldModelStore.getModel();
-      const trigger: DecisionTrigger = {
-        id: `death_${Date.now()}`,
-        priority: 'CRITICAL',
-        category: 'hero_death',
-        reason: `Герой погиб на ${Math.floor(deathInfo.clock / 60)} мин (возрождение ${deathInfo.respawnSeconds}с). Нужен план выкупа и действий после возрождения.`,
-        clockTime: deathInfo.clock,
-        matchId: model.meta.matchId,
-        metadata: deathInfo,
-      };
-      this.handleRouterTrigger(trigger);
-    });
-
-    this.eventEngine.on('plan_completed', (plan: StrategicPlan) => {
-      const model = this.worldModelStore.getModel();
-      const trigger: DecisionTrigger = {
-        id: `completed_${Date.now()}`,
-        priority: 'NORMAL',
-        category: 'plan_completed',
-        reason: `Предыдущая цель «${plan.targetItem}» достигнута! Сформируй следующий стратегический артефакт и вектор движения.`,
-        clockTime: model.meta.clockTime,
-        matchId: model.meta.matchId,
-        metadata: { planId: plan.id, targetItem: plan.targetItem },
-      };
-      this.handleRouterTrigger(trigger);
     });
   }
 
@@ -97,10 +54,10 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     // 1. State Engine Update (< 0.2ms)
     const model = this.stateEngine.process(raw, processed);
 
-    // 2. Event Engine Evaluation
+    // 2. Event Engine Evaluation (updates world model & produces dashboard semantic events)
     this.eventEngine.evaluate(model);
 
-    // 3. System-1 Realtime Cognition via Laya (asynchronous, throttled to 2.5s)
+    // 3. System-1 Realtime Cognition via Laya (strictly local inference, throttled to 2.5s, NEVER calls Gemini)
     const now = Date.now();
     if (!this.isEvaluatingLaya && now - this.lastLayaEvaluationTime > 2500) {
       this.isEvaluatingLaya = true;
@@ -120,19 +77,7 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
             riskScore: layaResult.riskScore,
           };
 
-          // Decision Router: Escalation from Laya System-1 to Gemini System-2
-          if (layaResult.escalateToGemini) {
-            const trigger: DecisionTrigger = {
-              id: `laya_escalation_${Date.now()}`,
-              priority: 'HIGH',
-              category: 'tactical_escalation',
-              reason: layaResult.escalationReason || 'Laya System-1 зафиксировала критическую угрозу позиции.',
-              clockTime: model.meta.clockTime,
-              matchId: model.meta.matchId,
-            };
-            this.handleRouterTrigger(trigger);
-          }
-
+          // Laya runs 100% autonomously: NEVER triggers Gemini
           this.emit('laya_cognition', layaResult);
         })
         .catch((err) => {
@@ -143,7 +88,7 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
         });
     }
 
-    // 4. Outcome Tracking Evaluation Loop
+    // 4. Outcome Tracking Evaluation Loop (evaluates player trajectory after manual plans)
     this.evaluateOutcomes(model);
 
     // 5. Broadcast updated World Model
@@ -151,54 +96,10 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     return model;
   }
 
-  private handleRouterTrigger(trigger: DecisionTrigger): void {
-    const evaluation = this.decisionRouter.evaluateTrigger(trigger);
-    if (!evaluation.allowed) {
-      console.log(`[Decision Router Rejected] ${trigger.category}: ${evaluation.reason}`);
-      return;
-    }
-
-    this.decisionRouter.recordTriggerAccepted(trigger);
-    this.executeReplanning(trigger.reason, trigger.category, trigger.metadata?.planId);
-  }
-
-  private async executeReplanning(reason: string, category: string, planId?: string): Promise<void> {
-    const now = Date.now();
-    this.lastGeminiCallTime = now;
-    const model = this.worldModelStore.getModel();
-
-    console.log(`🧠 [Decision Router -> Gemini Gateway] Запрос стратегического плана: "${reason}"`);
-    const result = await GeminiGateway.generateStrategicPlan(model, reason);
-
-    if (result.success && result.plan) {
-      if (model.strategy.activePlan) {
-        model.strategy.previousPlans.unshift(model.strategy.activePlan);
-        if (model.strategy.previousPlans.length > 5) model.strategy.previousPlans.pop();
-      }
-
-      model.strategy.activePlan = result.plan;
-      model.strategy.lastGeminiAnalysisTime = now;
-
-      // Register new advice outcome for tracking
-      this.recordAdviceOutcome(
-        model,
-        result.plan.guidanceText,
-        result.plan.priority,
-        reason,
-        result.plan.id
-      );
-
-      this.emit('strategic_plan', {
-        plan: result.plan,
-        guidanceText: result.guidanceText,
-        model: result.modelUsed,
-        timestamp: now,
-      });
-
-      this.emit('world_update', model);
-    }
-  }
-
+  /**
+   * Sole manual entry point for invoking Gemini System-2.
+   * Triggered only when the user explicitly clicks the ask button or submits a manual question.
+   */
   public async askManualQuestion(question: string): Promise<StrategicPlanResult> {
     const model = this.worldModelStore.getModel();
     const reason = question.trim() || 'Игрок запросил экспресс-совет по текущей ситуации.';
@@ -226,7 +127,8 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     this.decisionRouter.recordTriggerAccepted(trigger);
     this.lastGeminiCallTime = Date.now();
 
-    const result = await GeminiGateway.generateStrategicPlan(model, reason);
+    // Invocation is strictly typed as 'manual'
+    const result = await GeminiGateway.generateStrategicPlan(model, reason, 'manual');
 
     if (result.success && result.plan) {
       if (model.strategy.activePlan) {

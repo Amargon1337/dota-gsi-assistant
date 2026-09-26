@@ -77,14 +77,21 @@
     <!-- Main Strategic 2-Column Dashboard Grid -->
     <main class="dashboard-grid strategic-grid">
 
-      <!-- COLUMN 1: Strategic Co-Pilot (Gemini System-2 ⇄ Leya System-1) & Event Stream -->
+      <!-- COLUMN 1: Strategic Co-Pilot (Laya System-1 Live & Gemini System-2 Manual) & Event Stream -->
       <section class="card ai-card">
         <div class="card-header">
           <div class="card-title">
             <span class="card-icon">🧠</span>
-            <h2>СТРАТЕГИЧЕСКИЙ ПЛАН (GEMINI ⇄ LEYA)</h2>
+            <h2>СТРАТЕГИЧЕСКИЙ ПЛАН</h2>
           </div>
-          <span class="badge ai-model-badge" id="activeModelBadge">Gemini Flash Lite</span>
+          <div class="ai-status-badges" style="display: flex; gap: 6px; align-items: center;">
+            <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); font-weight: 600;">🧠 LAYA — LIVE</span>
+            <span class="badge" style="background: rgba(41, 182, 246, 0.15); color: #29b6f6; border: 1px solid rgba(41, 182, 246, 0.4); font-weight: 600;" id="activeModelBadge">☁️ GEMINI — MANUAL</span>
+          </div>
+        </div>
+
+        <div style="background: rgba(255, 255, 255, 0.04); border-left: 3px solid #29b6f6; padding: 6px 12px; margin: 8px 0 12px; border-radius: 4px; font-size: 11px; color: #b0bec5;">
+          ℹ️ <strong>Laya работает автономно. Gemini вызывается только вручную.</strong> (Gemini requests are made only when you ask.)
         </div>
 
         <!-- Active Strategic Plan -->
@@ -117,8 +124,8 @@
           </div>
 
           <div class="coach-actions">
-            <button id="askCoachQuickBtn" class="btn btn-sm btn-accent">
-              ⚡ Спросить совет / Обновить план
+            <button id="askCoachQuickBtn" class="btn btn-sm btn-accent" style="width: 100%; font-size: 13px; padding: 10px; font-weight: 600;">
+              ⚡ Спросить совет Gemini / Обновить план (Manual)
             </button>
           </div>
 
@@ -304,11 +311,12 @@
             <small class="form-hint">Защита API и WebSocket от несанкционированного доступа</small>
           </div>
 
-          <div class="form-group checkbox-group">
+          <div class="form-group checkbox-group" style="opacity: 0.85;">
             <label>
-              <input type="checkbox" id="autoCoachCheckbox" checked>
-              Автоматическое перепланирование при нарушении безопасности и смертях
+              <input type="checkbox" id="autoCoachCheckbox" disabled>
+              🔒 Gemini строго по запросу (автоматические фоновые вызовы отключены)
             </label>
+            <small class="form-hint" style="color: #a0a0b0; display: block; margin-top: 4px;">Фоновый анализ угроз и безопасность выполняет локальная Laya System-1. Gemini вызывается только по вашей кнопке.</small>
           </div>
 
           <div class="ai-status-summary">

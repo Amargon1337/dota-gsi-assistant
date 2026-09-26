@@ -8,78 +8,107 @@
 
 ## 🏛️ Архитектура системы
 
+Двухконтурная разделенная архитектура: непрерывный локальный тактический контур (System-1) и ручной стратегический контур (System-2):
+
 ```
-                    DOTA 2 (Source 2 Client)
-                               │
-                      [HTTP POST /gsi]
-                      (Strict Token Auth)
-                               ▼
+                   DOTA 2 (Source 2 Client)
+                              │
+                     [HTTP POST /gsi]
+                     (Strict Token Auth)
+                              ▼
                         State Manager
-                               │
-                               ▼
-                      Game Session Manager ──── (Atomic Reset on new matchid)
-                               │
-                               ▼
-                          State Engine
-                               │
-                               ▼
-                       Shared World Model
-                               │
-            ┌──────────────────┴──────────────────┐
-            ▼                                     ▼
-       Event Engine                        Laya System-1
-     (Every-Tick Plan &                  (ModernBERT-large
-      Roshan Evaluation)                  Tactical Classifier)
-            │                                     │
-            └──────────────────┬──────────────────┘
-                               ▼
-                        Decision Router
-                  (Priority Tiers: CRITICAL / HIGH / NORMAL)
-                  (Category Cooldowns & autoCoach Gating)
-                               │
-                               ▼
-                       Gemini Budget Manager
-                   (Atomic reserveSlot: 15 RPM / 500 RPD)
-                               │
-                               ▼
-                        Gemini System-2
-                   (Gemini 2.5/3.5 Flash Lite)
-                   (12s AbortController & Schema Validator)
-                               │
-                               ▼
-                     Advisor & Outcome Tracker
-                  (matchId bound, 60s horizon)
-                               │
-                      [WebSocket /ws]
-                     (Token Authenticated)
-                               ▼
-                   Responsive Second Screen UI
+                              │
+                              ▼
+                     Game Session Manager ──── (Atomic Reset on new matchid)
+                              │
+                              ▼
+                         State Engine
+                              │
+                              ▼
+                      Shared World Model
+                              │
+        ┌─────────────────────┴─────────────────────┐
+        ▼                                           ▼
+   Event Engine                               Laya System-1
+ (Every-Tick Zone &                         (ModernBERT-large
+  Roshan & Economy)                          Local Microservice ~35ms)
+        │                                           │
+        │ [Zero Gemini Calls]                       │ [100% Local Inference,
+        │                                           │  NO Gemini Escalation]
+        ▼                                           ▼
+   Recent Events                              Tactical Action & Gank Risk
+        │                                           │
+        └─────────────────────┬─────────────────────┘
+                              ▼
+                     Dashboard / WebSocket
+                   (Live Realtime Telemetry)
+
+
+   ────────────────── РУЧНОЙ КОНТУР GEMINI (SYSTEM-2) ──────────────────
+
+                     USER clicks "ASK GEMINI"
+                              │
+                              ▼
+                AdvisorService.askManualQuestion()
+                              │
+                              ▼
+                       Decision Router
+                 (Enforces: MANUAL-ONLY policy)
+                 (Debounces rapid user spam <2s)
+                              │
+                              ▼
+                    Gemini Budget Manager
+                (Atomic reserveSlot: 15 RPM / 500 RPD)
+                              │
+                              ▼
+                        Gemini Gateway
+                 (invocationType === 'manual')
+                 (12s AbortController & Schema Validator)
+                              │
+                              ▼
+                       Gemini System-2
+                 (Gemini 2.5/3.5 Flash Lite API)
+                              │
+                              ▼
+                     Updated Strategic Plan
+                              │
+                              ▼
+                     Outcome Tracker (60s)
+                              │
+                              ▼
+                     Dashboard / WebSocket
 ```
 
 ---
 
 ## 🛡️ Принципы достоверности и безопасности данных (No Hallucination)
 
-1. **Туман войны (Fog of War) и режим наблюдений (`observationMode`):**
+1. **Gemini строго по ручному запросу (Manual-Only Invariant):**
+   * Никакие фоновые игровые события (`hero_death`, `plan_violated`, `plan_completed`, `roshan`, `item_power_spike`) не расходуют квоту Gemini.
+   * Laya System-1 анализирует оперативную обстановку локально на процессоре/видеокарте игрока каждые ~2.5 секунды с нулевыми сетевыми вызовами к Gemini.
+   * Защита реализована на двух независимых рубежах:
+     - **Рубеж 1 (`DecisionRouter`):** безусловно отклоняет любые не-`MANUAL` триггеры с ошибкой `Gemini is manual-only`.
+     - **Рубеж 2 (`GeminiGateway`):** при любом вызове, где `invocationType !== 'manual'`, немедленно возвращает `error: 'MANUAL_ONLY'` до выполнения сетевых запросов и без списания бюджета квоты.
+2. **Туман войны (Fog of War) и режим наблюдений (`observationMode`):**
    * В режиме одиночного игрока GSI передает данные исключительно о состоянии клиента вашего персонажа (`player_gsi_fow_restricted`). Движок Valve строго отсекает данные о скрытых врагах в тумане войны на уровне сервера.
    * `ObservationCollector` служит модулем телеметрии и приема наблюдений (из спектаторского GSI или симуляции); система никогда не фальсифицирует координаты невидимых врагов. Все наблюдения имеют источники (`gsi`, `mock`, `inferred`, `unknown`) и шкалу свежести (`fresh` < 15с, `stale` 15–60с, `expired` > 60с).
-2. **Фактические данные Dota2ProTracker (7.41f) и Происхождение (Provenance):**
+3. **Фактические данные Dota2ProTracker (7.41f) и Происхождение (Provenance):**
    * Все рекомендации строятся на проверенных снапшотах меты из папки `data/d2pt/*.json` со строгой фиксацией происхождения (`sourceUrl`, `fetchedAt`, `dataAgeDays`, `extractionMethod: "static_snapshot"`, `confidenceNotes`). Снапшоты старше 7 дней или другого патча маркируются как `isStale`.
-   * Синтетическая генерация данных исключена: если героя нет в базе снапшотов, система честно возвращает `targetItem: null, d2ptAvailable: false, recommendationSource: 'none'`, позволяя Gemini System-2 сформировать совет из фундаментального знания патча и текущего инвентаря игрока без навязывания ложных шаблонов.
-3. **Идентичность предметов (Item Identity):**
+   * Синтетическая генерация данных исключена: если героя нет в базе снапшотов, система честно возвращает `targetItem: null, d2ptAvailable: false, recommendationSource: 'none'`, позволяя Gemini сформировать совет из фундаментального знания патча и текущего инвентаря игрока без навязывания ложных шаблонов.
+4. **Идентичность предметов (Item Identity):**
    * Разделены строгие проверки: `ownsExactItem` (точное совпадение слота/алиаса) и `satisfiesRequirement` (компонентное удовлетворение: `Manta Style` удовлетворяет `Yasha`, `Hurricane Pike` удовлетворяет `Dragon Lance`, `Abyssal Blade` удовлетворяет `Skull Basher`, `Swift Blink` удовлетворяет `Blink Dagger`).
    * Ботинки строго уникальны и не взаимозаменяемы: `Phase Boots != Power Treads`, `Tranquil != Treads`.
-4. **Отказоустойчивость Gemini Gateway (Fail-Closed):**
+5. **Отказоустойчивость Gemini Gateway (Fail-Closed):**
    * При некорректном JSON или несовпадении схемы `StrategicPlan` система строго закрывается с ошибкой `INVALID_MODEL_OUTPUT`, немедленно освобождает слот в Gemini Budget Manager и **не** создает синтетический fallback-план с ложным `success: true`.
    * Если модель предлагает предмет, который уже куплен в инвентаре игрока, план бракуется с освобождением слота бюджета.
-5. **Атомарный сброс сессий (GameSessionManager):**
+6. **Атомарный сброс сессий (GameSessionManager):**
    * Смена `matchid` в пакете GSI инициирует мгновенный полный сброс всех подсистем (`StateEngine`, `EventEngine`, `ObservationCollector`, `WorldModelStore`, `DecisionRouter`, `AdvisorService`). Никаких остаточных данных предыдущей игры.
-6. **Безопасность токенов и аутентификация WebSocket:**
+7. **Безопасность токенов и аутентификация WebSocket:**
    * При первом запуске сервер автоматически генерирует криптографически стойкий 32-символьный hex-токен дашборда и сохраняет в `ai-config.json`.
    * WebSocket авторизуется через подпротокол HTTP-заголовков `Sec-WebSocket-Protocol: ['dota-auth', token]` или начальное сообщение `{ type: 'AUTH', token }`, исключая утечку токенов в строке запроса URL (`/ws?token=...`).
    * GSI эндпоинт `/gsi` строго валидирует токен (`dota_assistant_token_77`). Пакеты без токена отклоняются с кодом `401 Unauthorized`.
    * API ключ Google AI Studio хранится исключительно на сервере и никогда не отдается во фронтенд.
-7. **Эвристическая кривая темпа фарма:**
+8. **Эвристическая кривая темпа фарма:**
    * Функция `calculateHeuristicNetworthCurve` явно задокументирована как авторская эвристическая кривая сравнения темпа для кор-героев, а не официальный бенчмарк Valve или D2PT.
 
 ---
@@ -119,25 +148,21 @@ npm start
 # Запуск в отдельном окне терминала
 npm run laya
 ```
-Анализирует оперативную обстановку каждые 2.5 секунды: вычисляет калиброванный `riskScore`, определяет угрозу внезапного нападения и рекомендует моментальные тактические действия (`RETREAT`, `FARM_SAFE`, `PUSH_LANE`, `TEAMFIGHT`, `ROSHAN`). При критических аномалиях эскалирует запрос в Систему-2.
+Анализирует оперативную обстановку каждые ~2.5 секунды: вычисляет калиброванный `riskScore`, определяет угрозу внезапного нападения и рекомендует моментальные тактические действия (`RETREAT`, `FARM_SAFE`, `PUSH_LANE`, `TEAMFIGHT`, `ROSHAN`). Работает 100% автономно и **никогда** не расходует квоту Gemini.
 
-### Система-2: Google Gemini Flash Lite (Стратег)
+### Система-2: Google Gemini Flash Lite (Стратег — Strictly Manual)
 1. Получите бесплатный API ключ на [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. В дашборде откройте **«🤖 AI Настройки»**, укажите ключ и выберите модель:
    * **`gemini-2.5-flash-lite`** (500 RPD — рекомендуемая быстрая модель)
    * **`gemini-3.5-flash-lite`** (экспериментальная модель)
-3. **Decision Router** централизованно координирует вызовы Gemini:
-   * `CRITICAL` (нарушение зоны плана, гибель героя)
-   * `HIGH` (убийство/респаун Рошана, потеря ключевых вышек, эскалация от Laya)
-   * `NORMAL` (завершение сборки артефакта)
-   * `MANUAL` (прямой вопрос тренеру по кнопке)
+3. Gemini вызывается исключительно по явной кнопке пользователя **«⚡ Спросить совет Gemini / Обновить план»** или через форму свободного вопроса тренеру.
 4. **Gemini Budget Manager:** гарантирует атомарную резервацию слотов (15 RPM / 500 RPD) без race conditions.
 
 ---
 
 ## 🧪 Запуск тестов и демо-сценариев
 
-### Запуск полного набора тестов (18 сценариев A–R)
+### Запуск полного набора тестов (22 сценария A–V)
 ```powershell
 npm test
 ```
@@ -152,14 +177,18 @@ npm test
 * **H:** Атомарный сброс всех компонентов при смене матча
 * **I:** Строгая типизация `getRawState()`
 * **J:** Непрерывная проверка плана на каждом тике
-* **K:** Приоритеты и кулдауны Decision Router
-* **L:** Блокировка авто-вызовов при выключенном autoCoach
+* **K:** Инвариант Decision Router: отклонение всех не-MANUAL триггеров (`Gemini is manual-only`)
+* **L:** Прием ручных триггеров и дебаунс повторных кликов (< 2 сек)
 * **M:** Валидатор схемы ответов Gemini Gateway
 * **N:** Детерминированное отслеживание исходов советов
 * **O:** Контроль защищенности токенов и API ключей
 * **P:** Точность освобождения слотов при параллельных запросах бюджета
 * **Q:** Отказоустойчивость Gemini Gateway (Fail-Closed) на невалидный JSON, неполную схему и дубли предметов
 * **R:** Режимы наблюдения `observationMode` и эвристическая кривая темпа фарма
+* **S:** Инвариант Gemini Gateway: мгновенное отклонение не-ручных вызовов (`MANUAL_ONLY`) до HTTP и бюджета
+* **T:** Инвариант фонового пайплайна: критический риск Laya и игровые события дают 0 вызовов Gemini
+* **U:** Высоконагруженная автономность: 100 последовательных инференсов Laya дают ровно 0 запросов к Gemini
+* **V:** Ручной пайплайн: успешное формирование плана через `AdvisorService.askManualQuestion()`
 
 ### Запуск симулятора матча по сценариям
 ```powershell

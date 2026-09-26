@@ -11,7 +11,8 @@ export type GeminiErrorCode =
   | 'AUTH_ERROR'
   | 'TIMEOUT'
   | 'INVALID_MODEL_OUTPUT'
-  | 'NETWORK_ERROR';
+  | 'NETWORK_ERROR'
+  | 'MANUAL_ONLY';
 
 export interface StrategicPlanResult {
   success: boolean;
@@ -28,10 +29,25 @@ export class GeminiGateway {
 
   public static async generateStrategicPlan(
     model: SharedWorldModel,
-    triggerReason: string
+    triggerReason: string,
+    invocationType: 'manual' | string = 'manual'
   ): Promise<StrategicPlanResult> {
     const config = ConfigManager.get();
     const startTime = Date.now();
+
+    // HARD POLICY INVARIANT: Second line of defense — Gemini is strictly manual-only.
+    // Immediately reject any background/automated invocation before any network or budget operations.
+    if (invocationType !== 'manual') {
+      console.warn(`[Gemini Gateway] Заблокирован не-ручной вызов Gemini (invocationType=${invocationType})`);
+      return {
+        success: false,
+        guidanceText: '⚠️ Gemini вызывается строго вручную по кнопке. Автоматические вызовы запрещены.',
+        modelUsed: config.geminiModel,
+        latencyMs: 0,
+        error: 'MANUAL_ONLY',
+        errorDetails: `Non-manual invocation rejected: invocationType was "${invocationType}"`,
+      };
+    }
 
     if (!config.geminiApiKey || config.geminiApiKey.trim() === '') {
       return {

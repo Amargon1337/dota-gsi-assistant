@@ -12,8 +12,6 @@ export interface LayaCognitiveResult {
   tacticalAction: 'farm_safe' | 'push_lane' | 'roshan' | 'teamfight' | 'retreat';
   certainty: number; // 0.0 to 1.0
   planSafety: 'safe' | 'compromised' | 'critical_violation';
-  escalateToGemini: boolean;
-  escalationReason?: string;
   raw?: any;
 }
 
@@ -87,12 +85,6 @@ export class LayaClient {
       }
 
       const certainty = Math.round(actionConfidence * 100) / 100;
-      const shouldEscalate = planSafety === 'critical_violation' || gankChoice === 'critical';
-      const escalationReason = shouldEscalate
-        ? planSafety === 'critical_violation'
-          ? 'Laya зафиксировала критическое нарушение текущего стратегического плана.'
-          : 'Laya зафиксировала критический риск ганка вражеской командой.'
-        : undefined;
 
       return {
         available: true,
@@ -102,8 +94,6 @@ export class LayaClient {
         tacticalAction,
         certainty,
         planSafety,
-        escalateToGemini: shouldEscalate,
-        escalationReason,
         raw: answers,
       };
     } catch {
@@ -151,8 +141,6 @@ export class LayaClient {
       tacticalAction,
       certainty: 0.80,
       planSafety,
-      escalateToGemini: planSafety === 'critical_violation',
-      escalationReason: planSafety === 'critical_violation' ? 'Критический эвристический риск ганка' : undefined,
     };
   }
 }

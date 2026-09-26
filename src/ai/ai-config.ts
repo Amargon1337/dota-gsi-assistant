@@ -30,7 +30,7 @@ const CONFIG_PATH = path.resolve(__dirname, '../../ai-config.json');
 const DEFAULT_CONFIG: AiConfig = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
-  autoCoachEnabled: process.env.AUTO_COACH_ENABLED === 'true',
+  autoCoachEnabled: false, // Deprecated: Gemini invocations are strictly manual-only
   layaUrl: process.env.LAYA_URL || 'http://127.0.0.1:8000/v1/systemone',
   rateLimitSeconds: Number(process.env.RATE_LIMIT_SECONDS) || 15,
   rpmLimit: Number(process.env.GEMINI_RPM_LIMIT) || 15,
