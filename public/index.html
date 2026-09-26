@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Dota 2 AI Tactical Co-Pilot • Second Screen</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="theme-dota">
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-mark">DOTA 2</div>
+        <div class="header-titles">
+          <h1>AI TACTICAL CO-PILOT</h1>
+          <div class="connection-status" id="connStatus">
+            <span class="status-dot"></span>
+            <span class="status-text">Ожидание Dota 2...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <!-- Main Game Clock -->
+        <div class="clock-display" id="clockDisplay">
+          <div class="day-night-icon" id="dayNightIcon" title="Смена дня и ночи">☀️</div>
+          <div class="clock-value" id="gameClock">00:00</div>
+          <div class="day-night-countdown" id="dayNightCountdown">ночь через 05:00</div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button id="openAiSettingsBtn" class="btn btn-ai" title="Настройки Gemini AI и Laya">
+          🤖 AI Настройки
+        </button>
+        <button id="toggleMockBtn" class="btn btn-secondary" title="Запустить или остановить тестовую симуляцию матча">
+          🧪 Демо-режим
+        </button>
+        <button id="toggleVoiceBtn" class="btn btn-voice active" title="Включить / выключить голосовые подсказки">
+          🔊 Голос: ВКЛ
+        </button>
+        <button id="testVoiceBtn" class="btn btn-icon" title="Проверить синтез речи">
+          🗣️
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Alert Banners -->
+    <div class="alert-banner-container" id="alertBannerContainer"></div>
+
+    <!-- Active Threat Evaluation Bar (Leya Calibrated Decision) -->
+    <div class="threat-alert-box" id="threatAlertBox" style="display: none;">
+      <div class="threat-header">
+        <div class="threat-title-group">
+          <span class="threat-badge" id="threatBadge">🔴 HIGH THREAT</span>
+          <h3 id="threatTitle">Опасность внезапного нападения</h3>
+        </div>
+        <div class="threat-confidence">
+          <span>Уверенность Laya:</span>
+          <strong id="threatConfidenceVal">84%</strong>
+          <div class="threat-conf-bar"><div class="threat-conf-fill" id="threatConfFill" style="width: 84%;"></div></div>
+        </div>
+      </div>
+      <div class="threat-body">
+        <div class="threat-evidence-list" id="threatEvidenceList"></div>
+        <div class="threat-action">
+          <span class="action-label">👉 Рекомендация:</span>
+          <span class="action-text" id="threatActionText">Отойдите под союзную вышку</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Strategic 2-Column Dashboard Grid -->
+    <main class="dashboard-grid strategic-grid">
+
+      <!-- COLUMN 1: Strategic Co-Pilot (Gemini System-2 ⇄ Leya System-1) & Event Stream -->
+      <section class="card ai-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon">🧠</span>
+            <h2>СТРАТЕГИЧЕСКИЙ ПЛАН (GEMINI ⇄ LEYA)</h2>
+          </div>
+          <span class="badge ai-model-badge" id="activeModelBadge">Gemini Flash Lite</span>
+        </div>
+
+        <!-- Active Strategic Plan -->
+        <div class="plan-card" id="planCard">
+          <div class="plan-header">
+            <div class="plan-title-row">
+              <span class="plan-pill">СТРАТЕГИЧЕСКИЙ ПЛАН (7.41f)</span>
+              <span class="plan-status-badge active" id="planStatusBadge">ГОТОВ К АНАЛИЗУ ✅</span>
+            </div>
+            <h3 id="planPriorityTitle">Нажмите «Спросить совет» для разбора ситуации</h3>
+          </div>
+
+          <div class="plan-details">
+            <div class="plan-row">
+              <span class="plan-key">Следующий артефакт (D2PT):</span>
+              <span class="plan-val highlight-val" id="planTargetItem">Ожидание запроса плана...</span>
+            </div>
+            <div class="plan-row">
+              <span class="plan-key">Безопасный фарм:</span>
+              <span class="plan-val safe" id="planSafeZones">Свой треугольник, лес</span>
+            </div>
+            <div class="plan-row">
+              <span class="plan-key">Опасные зоны (избегать):</span>
+              <span class="plan-val danger" id="planAvoidZones">Вражеская половина, Река</span>
+            </div>
+          </div>
+
+          <div class="coach-bubble" id="coachAdviceText">
+            Тренер 9500 MMR готов. Нажмите кнопку ниже для развернутого разбора билда по патчу 7.41f и действий в текущей ситуации.
+          </div>
+
+          <div class="coach-actions">
+            <button id="askCoachQuickBtn" class="btn btn-sm btn-accent">
+              ⚡ Спросить совет / Обновить план
+            </button>
+          </div>
+
+          <!-- Custom Question Form -->
+          <form id="askCoachForm" class="ask-form">
+            <input type="text" id="coachQuestionInput" class="ask-input" placeholder="Задать вопрос тренеру (например, когда идти на Рошана?)...">
+            <button type="submit" class="btn btn-sm btn-primary">Спросить</button>
+          </form>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <!-- Semantic Event Stream -->
+        <div class="card-title">
+          <span class="card-icon">📜</span>
+          <h3 class="subsection-title">Поток тактических событий (Event Stream)</h3>
+        </div>
+        <div class="event-stream" id="eventStream">
+          <div class="empty-state">Ожидание игровых событий...</div>
+        </div>
+      </section>
+
+      <!-- COLUMN 2: Economy & Velocity + Map Intelligence -->
+      <section class="card eco-map-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon">💎</span>
+            <h2>ЭКОНОМИКА И ТЕМП (VELOCITY)</h2>
+          </div>
+          <span class="benchmark-tag" id="benchmarkTag">ЭТАЛОН МАКРО</span>
+        </div>
+
+        <!-- Hero Net Worth Big Banner -->
+        <div class="networth-hero-banner">
+          <div class="nw-main">
+            <span class="nw-label">NET WORTH (РАСЧИТАННЫЙ ОБЩИЙ КАПИТАЛ)</span>
+            <div class="nw-number-row">
+              <span class="nw-gold-symbol">🪙</span>
+              <span class="nw-number" id="netWorthVal">0</span>
+              <span class="nw-currency">GOLD</span>
+            </div>
+          </div>
+          <div class="nw-benchmark-diff" id="nwDiffVal">
+            +0g (в темпе)
+          </div>
+        </div>
+
+        <!-- 4-Metric Velocity Grid -->
+        <div class="trends-grid">
+          <div class="trend-box">
+            <span class="trend-label">Дельта за 5 мин</span>
+            <span class="trend-val" id="nwDelta5mVal">+0g</span>
+          </div>
+          <div class="trend-box">
+            <span class="trend-label">Скорость фарма</span>
+            <span class="trend-val" id="goldVelocityVal">0.0 g/s</span>
+          </div>
+          <div class="trend-box">
+            <span class="trend-label">Эталон для этой минуты</span>
+            <span class="trend-val" id="expectedNwVal">0g</span>
+          </div>
+          <div class="trend-box">
+            <span class="trend-label">GPM (текущий темп)</span>
+            <span class="trend-val" id="gpmVal">0</span>
+          </div>
+        </div>
+
+        <!-- Buyback Status Card -->
+        <div class="buyback-widget" id="buybackWidget">
+          <div class="buyback-top">
+            <div class="bb-status-label">
+              <span class="bb-indicator" id="bbIndicator"></span>
+              <span class="bb-text" id="bbStatusText">СТАТУС ВЫКУПА</span>
+            </div>
+            <div class="bb-badge" id="bbBadge">--</div>
+          </div>
+          <div class="buyback-metrics">
+            <div class="bb-col">
+              <span class="metric-label">Стоимость байбека:</span>
+              <span class="metric-val" id="bbCostVal">0g</span>
+            </div>
+            <div class="bb-col">
+              <span class="metric-label">Текущее золото:</span>
+              <span class="metric-val" id="currentGoldVal">0g</span>
+            </div>
+            <div class="bb-col highlight-col">
+              <span class="metric-label">Запас / Дефицит:</span>
+              <span class="metric-val" id="bbSurplusVal">0g</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <!-- Map & Zone Intelligence (Replaces Broken Radar with Real GSI Data) -->
+        <div class="card-title">
+          <span class="card-icon">🗺️</span>
+          <h3 class="subsection-title">Контроль карты и безопасность зон</h3>
+        </div>
+
+        <div class="map-intelligence-widget">
+          <div class="zone-current-box">
+            <div class="zone-title-col">
+              <span class="zone-caption">ТЕКУЩАЯ ПОЗИЦИЯ:</span>
+              <span class="zone-name" id="currentZoneVal">База</span>
+            </div>
+            <span class="zone-risk-badge safe" id="zoneRiskBadge">БЕЗОПАСНО</span>
+          </div>
+
+          <div class="map-zones-matrix">
+            <div class="matrix-card safe-card">
+              <div class="matrix-header">
+                <span class="matrix-dot safe-dot"></span>
+                <span>Рекомендуемые зоны фарма</span>
+              </div>
+              <div class="matrix-content" id="safeZonesList">Свой треугольник, лес</div>
+            </div>
+
+            <div class="matrix-card danger-card">
+              <div class="matrix-header">
+                <span class="matrix-dot danger-dot"></span>
+                <span>Зоны повышенной опасности</span>
+              </div>
+              <div class="matrix-content" id="dangerZonesList">Вражеский лес, Река</div>
+            </div>
+          </div>
+
+          <div class="map-tactics-row">
+            <div class="tactic-item">
+              <span class="tactic-label">Вышки (Союзные / Вражеские):</span>
+              <span class="tactic-val" id="towersStatusVal">11 / 11</span>
+            </div>
+            <div class="tactic-item">
+              <span class="tactic-label">Тактический фактор:</span>
+              <span class="tactic-val" id="dayNightStatusVal">☀️ День (полный обзор 1800)</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- AI Settings Modal -->
+    <div class="modal-overlay" id="aiSettingsModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>🤖 Настройки AI Co-Pilot (Shared World Model)</h3>
+          <button id="closeAiModalBtn" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="geminiApiKeyInput">Google AI Studio API Key:</label>
+            <div class="input-with-button">
+              <input type="password" id="geminiApiKeyInput" class="form-control" placeholder="AIzaSy...">
+              <button type="button" id="toggleApiKeyVisibility" class="btn btn-icon btn-sm">👁️</button>
+            </div>
+            <small class="form-hint">
+              Бесплатный ключ (лимит 500 RPD) в
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio ↗</a>
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="modelSelect">Выбор модели Gemini (RPD 500):</label>
+            <select id="modelSelect" class="form-control">
+              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (500 RPD, ультрабыстрый)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (500 RPD, рекомендованный)</option>
+              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (Experimental)</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="custom">Указать свою модель вручную...</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="customModelGroup" style="display: none;">
+            <label for="customModelInput">Имя модели вручную:</label>
+            <input type="text" id="customModelInput" class="form-control" placeholder="например, gemini-3.5-flash-lite">
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label>
+              <input type="checkbox" id="autoCoachCheckbox" checked>
+              Автоматическое перепланирование при нарушении безопасности и смертях
+            </label>
+          </div>
+
+          <div class="ai-status-summary">
+            <div class="status-item">
+              <span>Google Gemini API:</span>
+              <strong id="modalGeminiStatus" class="status-badge-off">Не настроен</strong>
+            </div>
+            <div class="status-item">
+              <span>Laya System-1:</span>
+              <strong id="modalLayaStatus" class="status-badge-off">Локальный микросервис</strong>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="saveAiSettingsBtn" class="btn btn-primary">💾 Сохранить настройки</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer info -->
+    <footer class="app-footer">
+      <div>Dota 2 GSI Assistant • 100% VAC-Safe • Second Screen Intelligence</div>
+      <div id="footerIpHint">Для смартфона введите локальный IP компьютера в браузере телефона</div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
