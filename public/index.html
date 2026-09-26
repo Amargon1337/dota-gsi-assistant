@@ -60,7 +60,7 @@
           <h3 id="threatTitle">Опасность внезапного нападения</h3>
         </div>
         <div class="threat-confidence">
-          <span>Уверенность Laya:</span>
+          <span>Оценка риска (Risk Score):</span>
           <strong id="threatConfidenceVal">84%</strong>
           <div class="threat-conf-bar"><div class="threat-conf-fill" id="threatConfFill" style="width: 84%;"></div></div>
         </div>
@@ -148,7 +148,7 @@
             <span class="card-icon">💎</span>
             <h2>ЭКОНОМИКА И ТЕМП (VELOCITY)</h2>
           </div>
-          <span class="benchmark-tag" id="benchmarkTag">ЭТАЛОН МАКРО</span>
+          <span class="benchmark-tag" id="benchmarkTag">ЭТАЛОННАЯ КРИВАЯ</span>
         </div>
 
         <!-- Hero Net Worth Big Banner -->
@@ -177,7 +177,7 @@
             <span class="trend-val" id="goldVelocityVal">0.0 g/s</span>
           </div>
           <div class="trend-box">
-            <span class="trend-label">Эталон для этой минуты</span>
+            <span class="trend-label">Эталонная кривая</span>
             <span class="trend-val" id="expectedNwVal">0g</span>
           </div>
           <div class="trend-box">
@@ -296,6 +296,12 @@
           <div class="form-group" id="customModelGroup" style="display: none;">
             <label for="customModelInput">Имя модели вручную:</label>
             <input type="text" id="customModelInput" class="form-control" placeholder="например, gemini-3.5-flash-lite">
+          </div>
+
+          <div class="form-group">
+            <label for="dashboardTokenInput">Токен доступа к дашборду (DASHBOARD_AUTH_TOKEN):</label>
+            <input type="text" id="dashboardTokenInput" class="form-control" placeholder="dashboard_secret_pass">
+            <small class="form-hint">Защита API и WebSocket от несанкционированного доступа</small>
           </div>
 
           <div class="form-group checkbox-group">

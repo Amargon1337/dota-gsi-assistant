@@ -25,25 +25,28 @@ function deepMerge<T>(target: any, source: any): T {
   return output as T;
 }
 
+import { GameSessionManager } from '../engine/game-session';
+
 export class StateManager extends EventEmitter {
   private rawState: GsiRawPayload = {};
   private lastUpdateTimestamp: number = 0;
   private spokenAlerts: Set<string> = new Set();
-  private lastMatchId: string = '';
 
   constructor() {
     super();
+    GameSessionManager.getInstance().registerComponent(this);
   }
 
   public update(payload: GsiRawPayload): ProcessedGameState {
     this.lastUpdateTimestamp = Date.now();
 
-    // Check if match changed or reset happened
-    const currentMatchId = payload.map?.matchid || '';
-    if (currentMatchId && currentMatchId !== this.lastMatchId) {
-      this.lastMatchId = currentMatchId;
-      this.rawState = {};
-      this.spokenAlerts.clear();
+    // Notify GameSessionManager of incoming match id and state
+    if (payload.map?.matchid) {
+      GameSessionManager.getInstance().update(
+        payload.map.matchid,
+        payload.map.game_state,
+        payload.map.clock_time
+      );
     }
 
     // Merge incoming delta
@@ -56,6 +59,10 @@ export class StateManager extends EventEmitter {
     this.emit('state', processed);
 
     return processed;
+  }
+
+  public getRawState(): GsiRawPayload {
+    return JSON.parse(JSON.stringify(this.rawState));
   }
 
   public getLatestState(): ProcessedGameState {

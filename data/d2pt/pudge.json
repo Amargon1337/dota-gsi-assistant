@@ -1,6 +1,9 @@
 {
   "hero": "Pudge",
   "heroKey": "pudge",
+  "source": "dota2protracker",
+  "fetchedAt": "2026-09-20T12:00:00Z",
+  "datasetVersion": "1.0",
   "dotaId": 14,
   "patch": "7.41f",
   "sampleSize": 7200,

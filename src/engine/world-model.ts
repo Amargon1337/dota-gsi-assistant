@@ -101,8 +101,9 @@ export interface EconomicTrends {
   pocketGoldDelta30s: number;
   spendingDetected: number;
   estimatedFarmVelocityPerSec: number; // calculated from Networth growth, not pocket gold
-  expectedNetworthBenchmark: number;
-  networthDifference: number; // networthNow - expectedBenchmark
+  estimatedNetworthReference: number; // reference curve heuristic
+  expectedNetworthBenchmark: number; // legacy field compatibility
+  networthDifference: number; // networthNow - estimatedNetworthReference
   deathsLast10m: number;
   killsLast10m: number;
 }
@@ -136,19 +137,24 @@ export interface TacticalActionState {
 
 export interface AdviceOutcomeRecord {
   id: string;
+  matchId: string;
   timestamp: number;
+  createdAt: number;
   clockTime: number;
+  triggerReason: string;
   adviceText: string;
   recommendedAction: string;
+  planId?: string;
   initialPlayerState: {
     hpPercent: number;
     zone: string;
     alive: boolean;
     networth: number;
   };
+  validUntilClock: number;
   evaluatedAtClock?: number;
   playerFollowedAction?: boolean;
-  result?: 'survived' | 'died' | 'farm_accelerated' | 'objective_secured' | 'neutral';
+  result?: 'survived' | 'died' | 'farm_accelerated' | 'objective_secured' | 'neutral' | 'expired';
   resultNotes?: string;
 }
 
@@ -295,6 +301,7 @@ export function createInitialWorldModel(): SharedWorldModel {
       pocketGoldDelta30s: 0,
       spendingDetected: 0,
       estimatedFarmVelocityPerSec: 0,
+      estimatedNetworthReference: 600,
       expectedNetworthBenchmark: 600,
       networthDifference: 0,
       deathsLast10m: 0,

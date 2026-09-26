@@ -205,11 +205,18 @@ export function parseTowerCounts(
   };
 }
 
+import { GameSessionManager } from './game-session';
+import { ObservationCollector } from '../gsi/observation-collector';
+
 export class StateEngine {
   private history: HistorySnapshot[] = [];
   private lastSampleClockTime = -999;
   private lastGoldPocket = 600;
   private worldModelStore = WorldModelStore.getInstance();
+
+  constructor() {
+    GameSessionManager.getInstance().registerComponent(this);
+  }
 
   public process(raw: GsiRawPayload, processed: ProcessedGameState): SharedWorldModel {
     const clock = raw.map?.clock_time ?? 0;
@@ -404,20 +411,10 @@ export class StateEngine {
       model.mapControl.dangerousZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle', 'Roshan Pit Area (River)'];
     }
 
-    // 10. Update Enemy Trackers (Freshness, Missing Durations)
-    for (const enemyKey of Object.keys(model.enemies)) {
-      const enemy = model.enemies[enemyKey];
-      if (clock > enemy.lastSeenClockTime) {
-        enemy.missingDurationSeconds = clock - enemy.lastSeenClockTime;
-      }
-      if (enemy.missingDurationSeconds < 15) {
-        enemy.freshness = 'fresh';
-      } else if (enemy.missingDurationSeconds < 60) {
-        enemy.freshness = 'stale';
-      } else {
-        enemy.freshness = 'expired';
-      }
-    }
+    // 10. Update Enemy Trackers via ObservationCollector
+    const collector = ObservationCollector.getInstance();
+    collector.updateClock(clock);
+    model.enemies = collector.getObservationsRecord();
 
     return model;
   }
@@ -467,6 +464,7 @@ export class StateEngine {
       pocketGoldDelta30s,
       spendingDetected,
       estimatedFarmVelocityPerSec,
+      estimatedNetworthReference: expectedBenchmark,
       expectedNetworthBenchmark: expectedBenchmark,
       networthDifference: networthDiff,
       deathsLast10m: currentDeaths - snapshot10m.deaths,
@@ -500,48 +498,26 @@ export class StateEngine {
     certainty: number = 0.95
   ): void {
     const model = this.worldModelStore.getModel();
-    const zoneInfo = classifyMapZone(x, y, model.player.team);
-
-    const hasBlink = items.some((i) => i.toLowerCase().includes('blink'));
-    const hasBkb = items.some((i) => i.toLowerCase().includes('bkb') || i.toLowerCase().includes('black_king_bar'));
-    const hasShadowBlade = items.some(
-      (i) =>
-        i.toLowerCase().includes('invis') ||
-        i.toLowerCase().includes('shadow_blade') ||
-        i.toLowerCase().includes('silver_edge')
+    ObservationCollector.getInstance().observeEnemy(
+      {
+        heroName,
+        x,
+        y,
+        items,
+        level,
+        clockTime,
+        source,
+        certainty,
+      },
+      model.player.team
     );
-
-    let threatScore = 3;
-    if (hasBlink) threatScore += 3;
-    if (hasShadowBlade) threatScore += 2;
-    if (level >= 6) threatScore += 2;
-
-    model.enemies[heroName] = {
-      name: heroName,
-      heroNameClean: heroName.replace('npc_dota_hero_', '').replace(/_/g, ' '),
-      level,
-      alive: true,
-      respawnSeconds: 0,
-      lastSeenClockTime: clockTime,
-      missingDurationSeconds: 0,
-      lastKnownLocation: { x, y, zoneName: zoneInfo.name, zoneInfo },
-      lastKnownHpPercent: 100,
-      lastKnownManaPercent: 100,
-      items,
-      hasBlink,
-      hasBkb,
-      hasShadowBlade,
-      threatScore: Math.min(10, threatScore),
-      observationSource: source,
-      certainty,
-      lastObservedAt: Date.now(),
-      freshness: 'fresh',
-    };
+    model.enemies = ObservationCollector.getInstance().getObservationsRecord();
   }
 
   public reset(): void {
     this.history = [];
     this.lastSampleClockTime = -999;
-    this.worldModelStore.reset();
+    this.lastGoldPocket = 600;
+    console.log('[STATE] Состояние StateEngine и история снапшотов сброшены');
   }
 }

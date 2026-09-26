@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import http from 'http';
 import path from 'path';
 import os from 'os';
@@ -10,6 +10,9 @@ import { ConfigManager } from './ai/ai-config';
 import { AdvisorService } from './ai/advisor-service';
 import { GeminiBudgetManager } from './ai/gemini-budget-manager';
 
+// Load configuration initially
+ConfigManager.load();
+
 const PORT = 3000;
 const app = express();
 const server = http.createServer(app);
@@ -20,9 +23,9 @@ const mockStreamer = new MockStreamer(stateManager);
 const advisorService = AdvisorService.getInstance();
 const budgetManager = GeminiBudgetManager.getInstance();
 
-// Connect AdvisorService to State updates
+// Connect AdvisorService to State updates with strict typing
 stateManager.on('state', (state) => {
-  advisorService.onGameStateUpdate((stateManager as any).rawState, state).catch((err) => {
+  advisorService.onGameStateUpdate(stateManager.getRawState(), state).catch((err) => {
     console.error('[Advisor Pipeline Error]', err);
   });
 });
@@ -51,15 +54,15 @@ app.use(
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
-// GSI Endpoint from Dota 2 Source 2 Engine with Auth Token Validation
+// GSI Endpoint from Dota 2 Source 2 Engine with strict Auth Token Validation
+// Missing or incorrect token -> 401 Unauthorized. Valid token -> 200 OK.
 app.post('/gsi', (req: Request, res: Response) => {
   const cfg = ConfigManager.get();
-  const expectedToken = (cfg as any).gsiAuthToken || 'dota_assistant_token_77';
+  const expectedToken = cfg.gsiAuthToken;
   const providedToken = req.body?.auth?.token;
 
-  // Validate GSI auth token if configured
-  if (expectedToken && providedToken && providedToken !== expectedToken) {
-    console.warn('[GSI Security] Отклонён пакет: неверный auth токен');
+  if (expectedToken && (!providedToken || providedToken !== expectedToken)) {
+    console.warn('[GSI Security] Отклонён пакет: отсутствующий или неверный auth токен');
     res.status(401).send('Unauthorized GSI Token');
     return;
   }
@@ -75,6 +78,33 @@ app.post('/gsi', (req: Request, res: Response) => {
     }
   });
 });
+
+// Dashboard Auth Middleware for /api/* routes
+const requireDashboardAuth = (req: Request, res: Response, next: NextFunction): void => {
+  const cfg = ConfigManager.get();
+  const expectedToken = cfg.dashboardAuthToken;
+
+  if (!expectedToken) {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  let token = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (req.query?.token) {
+    token = String(req.query.token).trim();
+  }
+
+  if (!token || token !== expectedToken) {
+    res.status(401).json({ error: 'Unauthorized: invalid or missing dashboard token' });
+    return;
+  }
+
+  next();
+};
+
+app.use('/api', requireDashboardAuth);
 
 // API endpoints for dashboard
 app.get('/api/state', (_req: Request, res: Response) => {
@@ -159,9 +189,20 @@ function broadcast(data: any): void {
   });
 }
 
-// WebSocket Connection - Send ONLY Sanitized Config without API key
-wss.on('connection', (ws: WebSocket) => {
+// WebSocket Connection - Validate Dashboard Token & Send Sanitized Config without API key
+wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   const cfg = ConfigManager.get();
+  const expectedToken = cfg.dashboardAuthToken;
+  const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+  const token = url.searchParams.get('token');
+
+  if (expectedToken && token !== expectedToken) {
+    console.warn('[WS Security] Отклонено соединение: неверный dashboard токен');
+    ws.send(JSON.stringify({ type: 'ERROR', error: 'AUTH_REQUIRED', message: 'Неверный токен дашборда' }));
+    ws.close(4401, 'Unauthorized');
+    return;
+  }
+
   ws.send(
     JSON.stringify({
       type: 'STATE_UPDATE',

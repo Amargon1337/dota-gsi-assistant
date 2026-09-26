@@ -78,6 +78,36 @@ const autoCoachCheckbox = document.getElementById('autoCoachCheckbox');
 const modalGeminiStatus = document.getElementById('modalGeminiStatus');
 const modalLayaStatus = document.getElementById('modalLayaStatus');
 const saveAiSettingsBtn = document.getElementById('saveAiSettingsBtn');
+const dashboardTokenInput = document.getElementById('dashboardTokenInput');
+
+function getDashboardToken() {
+  return localStorage.getItem('dota_dashboard_token') || 'dashboard_secret_pass';
+}
+
+function setDashboardToken(token) {
+  if (token) {
+    localStorage.setItem('dota_dashboard_token', token.trim());
+  }
+}
+
+async function authFetch(url, options = {}) {
+  const token = getDashboardToken();
+  const headers = {
+    ...(options.headers || {}),
+    'Authorization': `Bearer ${token}`,
+  };
+
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401) {
+    const entered = prompt('Требуется токен авторизации (DASHBOARD_AUTH_TOKEN):', token);
+    if (entered) {
+      setDashboardToken(entered);
+      headers['Authorization'] = `Bearer ${getDashboardToken()}`;
+      return fetch(url, { ...options, headers });
+    }
+  }
+  return response;
+}
 
 function formatSeconds(secs) {
   if (secs === null || secs === undefined || isNaN(secs)) return '--:--';
@@ -135,7 +165,8 @@ document.body.addEventListener('click', () => {
 
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws`;
+  const token = encodeURIComponent(getDashboardToken());
+  const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
 
   ws = new WebSocket(wsUrl);
 
@@ -173,9 +204,17 @@ function connectWebSocket() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     statusDot.className = 'status-dot';
-    statusText.textContent = 'Переподключение к World Model...';
+    if (event.code === 4401) {
+      statusText.textContent = 'Ошибка: неверный Dashboard токен';
+      const entered = prompt('Токен авторизации дашборда не подошел. Введите верный DASHBOARD_AUTH_TOKEN:');
+      if (entered) {
+        setDashboardToken(entered);
+      }
+    } else {
+      statusText.textContent = 'Переподключение к World Model...';
+    }
     setTimeout(connectWebSocket, 2000);
   };
 }
@@ -387,7 +426,7 @@ function prependSemanticEvent(ev) {
 async function askCoach(question = '') {
   coachAdviceText.textContent = '⏳ Gemini формирует стратегический план...';
   try {
-    const res = await fetch('/api/ai/ask', {
+    const res = await authFetch('/api/ai/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
@@ -419,7 +458,10 @@ askCoachForm.addEventListener('submit', (e) => {
 // AI Settings Modal
 async function loadAiConfig() {
   try {
-    const res = await fetch('/api/ai/config');
+    if (dashboardTokenInput) {
+      dashboardTokenInput.value = getDashboardToken();
+    }
+    const res = await authFetch('/api/ai/config');
     const cfg = await res.json();
     if (cfg.geminiApiKey) {
       geminiApiKeyInput.value = cfg.geminiApiKey;
@@ -457,8 +499,12 @@ saveAiSettingsBtn.addEventListener('click', async () => {
     : modelSelect.value;
   const autoCoach = autoCoachCheckbox.checked;
 
+  if (dashboardTokenInput && dashboardTokenInput.value.trim()) {
+    setDashboardToken(dashboardTokenInput.value.trim());
+  }
+
   try {
-    const res = await fetch('/api/ai/config', {
+    const res = await authFetch('/api/ai/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -480,7 +526,7 @@ saveAiSettingsBtn.addEventListener('click', async () => {
 
 toggleMockBtn.addEventListener('click', async () => {
   try {
-    const res = await fetch('/api/mock/toggle', { method: 'POST' });
+    const res = await authFetch('/api/mock/toggle', { method: 'POST' });
     const data = await res.json();
     if (data.mockActive) {
       toggleMockBtn.classList.add('active');

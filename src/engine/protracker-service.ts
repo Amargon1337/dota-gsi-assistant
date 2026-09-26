@@ -12,7 +12,7 @@ export class ProTrackerService {
     return D2PTDataStore.isItemPurchased(itemIdentifier, inventory);
   }
 
-  public static getHeroBuild(cleanHeroName: string): ProHeroBuild {
+  public static getHeroBuild(cleanHeroName: string): ProHeroBuild | null {
     return D2PTDataStore.getHeroMeta(cleanHeroName);
   }
 

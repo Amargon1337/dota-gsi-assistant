@@ -10,6 +10,12 @@ export interface BudgetStatus {
   rpdLimit: number;
 }
 
+export interface ReservationResult {
+  allowed: boolean;
+  reservationId?: string;
+  reason?: string;
+}
+
 export class GeminiBudgetManager {
   private static instance: GeminiBudgetManager;
   private rpmLimit = 15;
@@ -17,6 +23,7 @@ export class GeminiBudgetManager {
   private minuteTimestamps: number[] = [];
   private currentDay = '';
   private dailyCount = 0;
+  private activeReservations: Set<string> = new Set();
   private persistPath = path.join(__dirname, '../../data/gemini-budget.json');
 
   private constructor() {
@@ -63,13 +70,69 @@ export class GeminiBudgetManager {
         'utf-8'
       );
     } catch (e) {
-      console.error('[Gemini Budget] Ошибка сохранения файла бюджета:', e);
+      console.error('[BUDGET] Ошибка сохранения файла бюджета:', e);
     }
   }
 
   public setLimits(rpm: number, rpd: number): void {
     if (rpm > 0) this.rpmLimit = rpm;
     if (rpd > 0) this.rpdLimit = rpd;
+  }
+
+  /**
+   * Atomic slot reservation.
+   * Checks both RPM and RPD limits, reserves a slot atomically,
+   * eliminating any check-then-act race conditions.
+   */
+  public reserveSlot(reason: string): ReservationResult {
+    const now = Date.now();
+    const today = this.getTodayKey();
+
+    if (today !== this.currentDay) {
+      this.currentDay = today;
+      this.dailyCount = 0;
+      this.persistUsage();
+    }
+
+    // Filter timestamps older than 60s
+    this.minuteTimestamps = this.minuteTimestamps.filter((t) => now - t < 60000);
+
+    const currentRpm = this.minuteTimestamps.length;
+    if (currentRpm >= this.rpmLimit) {
+      return {
+        allowed: false,
+        reason: `Превышен лимит запросов в минуту (${currentRpm}/${this.rpmLimit} RPM).`,
+      };
+    }
+
+    if (this.dailyCount >= this.rpdLimit) {
+      return {
+        allowed: false,
+        reason: `Превышена суточная квота запросов (${this.dailyCount}/${this.rpdLimit} RPD).`,
+      };
+    }
+
+    const reservationId = `res_${now}_${Math.random().toString(36).substring(2, 7)}`;
+    this.minuteTimestamps.push(now);
+    this.dailyCount++;
+    this.activeReservations.add(reservationId);
+    this.persistUsage();
+
+    console.log(`[BUDGET] Слот атомарно зарезервирован [${reservationId}] ("${reason}"). RPM: ${this.minuteTimestamps.length}/${this.rpmLimit}, RPD: ${this.dailyCount}/${this.rpdLimit}`);
+    return {
+      allowed: true,
+      reservationId,
+    };
+  }
+
+  public releaseReservation(reservationId: string): void {
+    if (this.activeReservations.has(reservationId)) {
+      this.activeReservations.delete(reservationId);
+      if (this.dailyCount > 0) this.dailyCount--;
+      this.minuteTimestamps.pop();
+      this.persistUsage();
+      console.log(`[BUDGET] Слот [${reservationId}] освобожден из-за ошибки/отмены`);
+    }
   }
 
   public checkBudget(): BudgetStatus {
@@ -82,16 +145,14 @@ export class GeminiBudgetManager {
       this.persistUsage();
     }
 
-    // Filter out requests older than 60s
     this.minuteTimestamps = this.minuteTimestamps.filter((t) => now - t < 60000);
-
     const rpmUsed = this.minuteTimestamps.length;
     const rpdUsed = this.dailyCount;
 
     if (rpmUsed >= this.rpmLimit) {
       return {
         allowed: false,
-        reason: `Превышен лимит RPM (${rpmUsed}/${this.rpmLimit}). Повторите через несколько секунд.`,
+        reason: `Превышен лимит RPM (${rpmUsed}/${this.rpmLimit})`,
         rpmUsed,
         rpmLimit: this.rpmLimit,
         rpdUsed,
@@ -102,7 +163,7 @@ export class GeminiBudgetManager {
     if (rpdUsed >= this.rpdLimit) {
       return {
         allowed: false,
-        reason: `Превышена суточная квота RPD (${rpdUsed}/${this.rpdLimit} вызовов).`,
+        reason: `Превышен суточный лимит RPD (${rpdUsed}/${this.rpdLimit})`,
         rpmUsed,
         rpmLimit: this.rpmLimit,
         rpdUsed,
@@ -119,15 +180,16 @@ export class GeminiBudgetManager {
     };
   }
 
-  public recordUsage(): void {
-    const now = Date.now();
-    this.minuteTimestamps.push(now);
-    this.dailyCount++;
-    this.persistUsage();
-    console.log(`[Gemini Budget] Вызов учтен: RPM ${this.minuteTimestamps.length}/${this.rpmLimit}, RPD ${this.dailyCount}/${this.rpdLimit}`);
-  }
-
   public getStatus(): BudgetStatus {
     return this.checkBudget();
+  }
+
+  public reset(rpm: number = 15, rpd: number = 500): void {
+    this.minuteTimestamps = [];
+    this.dailyCount = 0;
+    this.activeReservations.clear();
+    this.rpmLimit = rpm;
+    this.rpdLimit = rpd;
+    this.persistUsage();
   }
 }
