@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 export interface AiConfig {
   geminiApiKey: string;
@@ -35,7 +36,7 @@ const DEFAULT_CONFIG: AiConfig = {
   rpmLimit: Number(process.env.GEMINI_RPM_LIMIT) || 15,
   rpdLimit: Number(process.env.GEMINI_RPD_LIMIT) || 500,
   gsiAuthToken: process.env.GSI_AUTH_TOKEN || 'dota_assistant_token_77',
-  dashboardAuthToken: process.env.DASHBOARD_AUTH_TOKEN || 'dashboard_secret_pass',
+  dashboardAuthToken: process.env.DASHBOARD_AUTH_TOKEN || '',
 };
 
 export class ConfigManager {
@@ -49,6 +50,17 @@ export class ConfigManager {
         this.config = this.mergeAndValidate(DEFAULT_CONFIG, parsed);
       } else {
         this.config = { ...DEFAULT_CONFIG };
+      }
+
+      // Auto-generate random secure hex token if unconfigured or default
+      if (
+        !process.env.DASHBOARD_AUTH_TOKEN &&
+        (!this.config.dashboardAuthToken || this.config.dashboardAuthToken === 'dashboard_secret_pass')
+      ) {
+        const randomSecret = crypto.randomBytes(16).toString('hex');
+        this.config.dashboardAuthToken = randomSecret;
+        this.save({ dashboardAuthToken: randomSecret });
+        console.log(`🔑 [Security] Сгенерирован защищенный Dashboard Auth Token: ${randomSecret}`);
       }
     } catch (err) {
       console.error('[CONFIG] Ошибка чтения ai-config.json, используются настройки по умолчанию:', err);

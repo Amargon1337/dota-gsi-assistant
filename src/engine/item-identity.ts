@@ -218,19 +218,12 @@ export class ItemIdentity {
   }
 
   /**
-   * Strictly determines if a target item (e.g. 'black_king_bar' or 'BKB')
-   * is present in the player's inventory.
-   *
-   * CRITICAL DOMAIN RULE:
-   * Phase Boots != Power Treads
-   * Tranquil Boots != Power Treads
-   * Travel Boots != Power Treads
-   * Items are distinct and not artificially equated!
+   * Strictly determines if the player owns the EXACT item (or direct name alias),
+   * without resolving upgrades (e.g. Manta does NOT count as exact Yasha).
    */
-  public static isExactItemPurchased(targetItem: string, inventory: string[]): boolean {
+  public static ownsExactItem(targetItem: string, inventory: string[]): boolean {
     const targetId = this.normalizeItemId(targetItem);
     const targetDef = ITEM_REGISTRY[targetId];
-
     const targetAliases = targetDef ? targetDef.aliases : [targetId];
 
     return inventory.some((invItem) => {
@@ -241,14 +234,41 @@ export class ItemIdentity {
       if (invDef && targetAliases.some((alias) => invDef.aliases.includes(alias))) {
         return true;
       }
-
-      // If inventory contains an upgraded version of the target item (e.g. Manta Style contains Yasha,
-      // Hurricane Pike contains Dragon Lance, Abyssal contains Basher, Swift Blink contains Blink)
-      if (invDef?.upgradedFrom?.includes(targetId)) {
-        return true;
-      }
-
       return false;
     });
+  }
+
+  /**
+   * Determines if the player's inventory satisfies the requirement for an item.
+   * Satisfied if:
+   * 1. The exact item is owned, OR
+   * 2. An item upgraded from the target item is owned (e.g. Manta Style satisfies Yasha,
+   *    Hurricane Pike satisfies Dragon Lance, Abyssal Blade satisfies Skull Basher,
+   *    Swift Blink satisfies Blink Dagger).
+   *
+   * CRITICAL DOMAIN RULE:
+   * Phase Boots != Power Treads
+   * Tranquil Boots != Power Treads
+   * Travel Boots != Power Treads
+   * Boots remain distinct!
+   */
+  public static satisfiesRequirement(targetItem: string, inventory: string[]): boolean {
+    if (this.ownsExactItem(targetItem, inventory)) return true;
+
+    const targetId = this.normalizeItemId(targetItem);
+
+    return inventory.some((invItem) => {
+      const invId = this.normalizeItemId(invItem);
+      const invDef = ITEM_REGISTRY[invId];
+      return Boolean(invDef?.upgradedFrom?.includes(targetId));
+    });
+  }
+
+  /**
+   * Legacy alias for satisfiesRequirement.
+   * @deprecated Prefer satisfiesRequirement() for build requirements or ownsExactItem() for inventory inspection.
+   */
+  public static isExactItemPurchased(targetItem: string, inventory: string[]): boolean {
+    return this.satisfiesRequirement(targetItem, inventory);
   }
 }

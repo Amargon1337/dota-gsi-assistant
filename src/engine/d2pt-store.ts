@@ -28,7 +28,11 @@ export interface D2PTHeroMeta {
   hero: string;
   heroKey: string;
   source: string;
+  sourceUrl?: string;
   fetchedAt: string;
+  dataAgeDays?: number;
+  extractionMethod?: string;
+  confidenceNotes?: string;
   datasetVersion: string;
   dotaId?: number;
   patch: string;
@@ -68,6 +72,7 @@ export class D2PTDataStore {
             if (validation.valid) {
               const meta = parsed as D2PTHeroMeta;
               meta.isStale = validation.isStale;
+              meta.dataAgeDays = validation.ageDays;
               const key = this.normalizeHeroName(meta.heroKey);
               this.metaCache.set(key, meta);
             } else {
@@ -136,30 +141,25 @@ export class D2PTDataStore {
     currentGold: number,
     gameClockSeconds: number
   ): {
-    targetItem: D2PTItemTiming;
+    targetItem: D2PTItemTiming | null;
     alreadyPurchased: string[];
     goldRemaining: number;
-    timingStatus: 'ahead' | 'on_time' | 'delayed';
+    timingStatus: 'ahead' | 'on_time' | 'delayed' | null;
     d2ptAvailable: boolean;
+    recommendationSource: 'd2pt' | 'none';
   } {
     const meta = this.getHeroMeta(heroName);
     const minute = Math.max(0, Math.floor(gameClockSeconds / 60));
 
     if (!meta) {
       // Honest fallback when hero is not in D2PT snapshot
-      const defaultItem: D2PTItemTiming = {
-        name: 'black_king_bar',
-        cleanName: 'Black King Bar',
-        cost: 4050,
-        expectedMinute: 22,
-        rationale: 'Универсальный соревновательный артефакт защиты от магии (D2PT снапшот для героя отсутствует)',
-      };
       return {
-        targetItem: defaultItem,
+        targetItem: null,
         alreadyPurchased: [],
-        goldRemaining: Math.max(0, defaultItem.cost - currentGold),
-        timingStatus: 'on_time',
+        goldRemaining: 0,
+        timingStatus: null,
         d2ptAvailable: false,
+        recommendationSource: 'none',
       };
     }
 
@@ -187,12 +187,13 @@ export class D2PTDataStore {
     }
 
     if (!nextItem) {
-      nextItem = {
-        name: 'swift_blink',
-        cleanName: 'Swift Blink',
-        cost: 6800,
-        expectedMinute: 40,
-        rationale: 'Лейт-апгрейд мобильности и инициации',
+      return {
+        targetItem: null,
+        alreadyPurchased,
+        goldRemaining: 0,
+        timingStatus: null,
+        d2ptAvailable: true,
+        recommendationSource: 'd2pt',
       };
     }
 
@@ -207,6 +208,7 @@ export class D2PTDataStore {
       goldRemaining,
       timingStatus,
       d2ptAvailable: true,
+      recommendationSource: 'd2pt',
     };
   }
 
@@ -236,20 +238,22 @@ export class D2PTDataStore {
       ? meta.situationalItems.map((i) => `${i.cleanName} (~${i.expectedMinute} мин: ${i.rationale})`).join('; ')
       : 'Стандартные';
 
+    const targetItemStr = nextAnalysis.targetItem
+      ? `  * Артефакт: ${nextAnalysis.targetItem.cleanName}\n  * Стоимость: ${nextAnalysis.targetItem.cost}g (осталось добрать: ${nextAnalysis.goldRemaining}g)\n  * Эталонный тайминг Pro-сцены: ~${nextAnalysis.targetItem.expectedMinute} мин (Статус темпа: ${nextAnalysis.timingStatus?.toUpperCase() || 'ON_TIME'})\n  * Обоснование D2PT: ${nextAnalysis.targetItem.rationale}`
+      : '  * Все основные и ситуативные артефакты из снапшота уже собраны. Выбирайте ситуативный лейт-артефакт.';
+
     return `
 [DOTA2PROTRACKER (D2PT) СНАПШОТ — ПАТЧ ${meta.patch}]
-- Источник: ${meta.source} (снапшот от ${meta.fetchedAt}, версия ${meta.datasetVersion})
+- Источник: ${meta.source} ${meta.sourceUrl ? `(${meta.sourceUrl})` : ''}
+- Снапшот от: ${meta.fetchedAt} (возраст данных: ${meta.dataAgeDays ?? 0} дн, метод: ${meta.extractionMethod || 'static_snapshot'})
 - Герой: ${meta.hero} (${meta.roles.join(', ')}), Статус снапшота: ${meta.isStale ? '⚠️ УСТАРЕЛ' : 'АКТУАЛЕН (7.41f)'}
 - Выборка D2PT: ${meta.sampleSize} матчей Immortal/Pro, средний Winrate: ${meta.overallWinrate}%
-- Аспекты (Facets): ${facetsStr}
+${meta.confidenceNotes ? `- Примечания выборки: ${meta.confidenceNotes}\n` : ''}- Аспекты (Facets): ${facetsStr}
 - Текущая минута: ${minute} мин
 - УЖЕ СОБРАННЫЕ АРТЕФАКТЫ: [${nextAnalysis.alreadyPurchased.join(', ') || 'нет ключевых'}]
   ⚠️ ЖЕСТКОЕ ПРАВИЛО: Эти слоты УЖЕ куплены. Никогда не выбирай их в targetItem!
 - РЕКОМЕНДУЕМЫЙ СЛЕДУЮЩИЙ СЛОТ ПО СТАТИСТИКЕ D2PT:
-  * Артефакт: ${nextAnalysis.targetItem.cleanName}
-  * Стоимость: ${nextAnalysis.targetItem.cost}g (осталось добрать: ${nextAnalysis.goldRemaining}g)
-  * Эталонный тайминг Pro-сцены: ~${nextAnalysis.targetItem.expectedMinute} мин (Статус темпа: ${nextAnalysis.timingStatus.toUpperCase()})
-  * Обоснование D2PT: ${nextAnalysis.targetItem.rationale}
+${targetItemStr}
 - Ситуативные метовые альтернативы D2PT: ${situationalStr}
 `.trim();
   }

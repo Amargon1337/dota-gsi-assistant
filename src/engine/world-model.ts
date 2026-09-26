@@ -159,6 +159,7 @@ export interface AdviceOutcomeRecord {
 }
 
 export interface SharedWorldModel {
+  observationMode: 'player_gsi_fow_restricted' | 'spectator_gsi' | 'mock_simulation';
   meta: {
     matchId: string;
     serverTime: number;
@@ -230,6 +231,7 @@ export interface SharedWorldModel {
 
 export function createInitialWorldModel(): SharedWorldModel {
   return {
+    observationMode: 'player_gsi_fow_restricted',
     meta: {
       matchId: '',
       serverTime: Date.now(),

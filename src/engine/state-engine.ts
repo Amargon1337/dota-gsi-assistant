@@ -142,7 +142,11 @@ export function determineMapZone(x: number, y: number, team: string = 'radiant')
   return classifyMapZone(x, y, normTeam).name;
 }
 
-function calculateExpectedNetworth(clockSeconds: number): number {
+/**
+ * Author heuristic reference curve for core heroes (NOT an official Valve/D2PT benchmark).
+ * Provides a rough baseline for evaluating farm progression over game time.
+ */
+export function calculateHeuristicNetworthCurve(clockSeconds: number): number {
   if (clockSeconds <= 0) return 600;
   const mins = clockSeconds / 60;
   if (mins < 10) {
@@ -153,6 +157,9 @@ function calculateExpectedNetworth(clockSeconds: number): number {
     return Math.round(11100 + (mins - 20) * 850); // 850 GPM lategame farming
   }
 }
+
+// Backwards compatibility alias
+export const calculateExpectedNetworth = calculateHeuristicNetworthCurve;
 
 export function parseTowerCounts(
   buildings: any,
@@ -225,6 +232,10 @@ export class StateEngine {
     const map = raw.map || {};
 
     const model = this.worldModelStore.getModel();
+
+    // 0. Observation Mode: Mock simulation vs Valve GSI solo-player Fog of War restricted
+    const isMock = raw.provider?.name === 'mock' || Object.values(model.enemies).some((e) => e.observationSource === 'mock');
+    model.observationMode = isMock ? 'mock_simulation' : 'player_gsi_fow_restricted';
 
     // 1. Update Meta
     model.meta.matchId = map.matchid || model.meta.matchId;
@@ -452,8 +463,8 @@ export class StateEngine {
     // Estimated Farm Velocity: calculated from TRUE Net Worth growth rate, NOT volatile pocket gold!
     const estimatedFarmVelocityPerSec = Math.max(0, Math.round(((currentNw - snapshot30s.networth) / secondsDiff30s) * 10) / 10);
 
-    const expectedBenchmark = calculateExpectedNetworth(currentClock);
-    const networthDiff = currentNw - expectedBenchmark;
+    const heuristicBenchmark = calculateHeuristicNetworthCurve(currentClock);
+    const networthDiff = currentNw - heuristicBenchmark;
 
     model.trends = {
       networthNow: currentNw,
@@ -464,8 +475,8 @@ export class StateEngine {
       pocketGoldDelta30s,
       spendingDetected,
       estimatedFarmVelocityPerSec,
-      estimatedNetworthReference: expectedBenchmark,
-      expectedNetworthBenchmark: expectedBenchmark,
+      estimatedNetworthReference: heuristicBenchmark,
+      expectedNetworthBenchmark: heuristicBenchmark,
       networthDifference: networthDiff,
       deathsLast10m: currentDeaths - snapshot10m.deaths,
       killsLast10m: currentKills - snapshot10m.kills,

@@ -114,16 +114,6 @@ export class DecisionRouter extends EventEmitter implements SessionResettable {
       };
     }
 
-    // 5. Budget check (RPM & RPD)
-    const budgetCheck = GeminiBudgetManager.getInstance().checkBudget();
-    if (!budgetCheck.allowed) {
-      return {
-        allowed: false,
-        reason: `Budget quota reached: ${budgetCheck.reason}`,
-        trigger,
-      };
-    }
-
     return {
       allowed: true,
       trigger,

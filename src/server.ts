@@ -16,7 +16,16 @@ ConfigManager.load();
 const PORT = 3000;
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  handleProtocols: (protocols: Set<string>) => {
+    if (protocols.has('dota-auth')) {
+      return 'dota-auth';
+    }
+    return false;
+  },
+});
 
 const stateManager = new StateManager();
 const mockStreamer = new MockStreamer(stateManager);
@@ -179,43 +188,89 @@ app.post('/api/ai/ask', async (req: Request, res: Response) => {
   res.json(result);
 });
 
-// WebSocket broadcasting
+// WebSocket broadcasting - only to authenticated clients
 function broadcast(data: any): void {
   const json = JSON.stringify(data);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
+  wss.clients.forEach((client: any) => {
+    if (client.readyState === WebSocket.OPEN && client.authenticated !== false) {
       client.send(json);
     }
   });
 }
 
-// WebSocket Connection - Validate Dashboard Token & Send Sanitized Config without API key
+// WebSocket Connection - Validate Dashboard Token via Sec-WebSocket-Protocol, initial message, or query param
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   const cfg = ConfigManager.get();
   const expectedToken = cfg.dashboardAuthToken;
-  const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-  const token = url.searchParams.get('token');
 
-  if (expectedToken && token !== expectedToken) {
-    console.warn('[WS Security] Отклонено соединение: неверный dashboard токен');
-    ws.send(JSON.stringify({ type: 'ERROR', error: 'AUTH_REQUIRED', message: 'Неверный токен дашборда' }));
-    ws.close(4401, 'Unauthorized');
-    return;
+  // 1. Primary: Sec-WebSocket-Protocol (e.g. ['dota-auth', token])
+  let token = '';
+  const secProto = req.headers['sec-websocket-protocol'];
+  if (secProto) {
+    const parts = secProto.split(',').map((s) => s.trim());
+    const dotaIdx = parts.indexOf('dota-auth');
+    if (dotaIdx !== -1 && parts.length > dotaIdx + 1) {
+      token = parts[dotaIdx + 1];
+    }
   }
 
-  ws.send(
-    JSON.stringify({
-      type: 'STATE_UPDATE',
-      payload: stateManager.getLatestState(),
-      worldModel: advisorService.getWorldModel(),
-      mockActive: mockStreamer.isActive(),
-      aiConfig: {
-        geminiConfigured: Boolean(cfg.geminiApiKey),
-        geminiModel: cfg.geminiModel,
-        autoCoachEnabled: cfg.autoCoachEnabled,
-      },
-    })
-  );
+  // 2. Legacy fallback: query parameter ?token=...
+  if (!token) {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    token = url.searchParams.get('token') || '';
+  }
+
+  let authenticated = false;
+
+  const onAuthenticated = () => {
+    authenticated = true;
+    (ws as any).authenticated = true;
+    ws.send(
+      JSON.stringify({
+        type: 'STATE_UPDATE',
+        payload: stateManager.getLatestState(),
+        worldModel: advisorService.getWorldModel(),
+        mockActive: mockStreamer.isActive(),
+        aiConfig: {
+          geminiConfigured: Boolean(cfg.geminiApiKey),
+          geminiModel: cfg.geminiModel,
+          autoCoachEnabled: cfg.autoCoachEnabled,
+        },
+      })
+    );
+  };
+
+  if (!expectedToken || token === expectedToken) {
+    onAuthenticated();
+  } else {
+    // 3. Fallback: Wait up to 4s for initial { type: 'AUTH', token } message before closing
+    const authTimeout = setTimeout(() => {
+      if (!authenticated) {
+        console.warn('[WS Security] Отклонено соединение: неверный или отсутствующий dashboard токен (таймаут auth)');
+        ws.send(JSON.stringify({ type: 'ERROR', error: 'AUTH_REQUIRED', message: 'Неверный токен дашборда' }));
+        ws.close(4401, 'Unauthorized');
+      }
+    }, 4000);
+
+    const authListener = (rawMsg: any) => {
+      try {
+        const msg = JSON.parse(rawMsg.toString());
+        if (msg.type === 'AUTH' && msg.token === expectedToken) {
+          clearTimeout(authTimeout);
+          ws.off('message', authListener);
+          onAuthenticated();
+        } else if (msg.type === 'AUTH') {
+          clearTimeout(authTimeout);
+          ws.off('message', authListener);
+          console.warn('[WS Security] Отклонено соединение: неверный токен в AUTH сообщении');
+          ws.send(JSON.stringify({ type: 'ERROR', error: 'AUTH_REQUIRED', message: 'Неверный токен дашборда' }));
+          ws.close(4401, 'Unauthorized');
+        }
+      } catch (_) {}
+    };
+
+    ws.on('message', authListener);
+  }
 });
 
 stateManager.on('state', (state) => {

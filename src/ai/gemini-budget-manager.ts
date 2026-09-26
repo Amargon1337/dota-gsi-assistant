@@ -16,6 +16,12 @@ export interface ReservationResult {
   reason?: string;
 }
 
+interface ActiveReservation {
+  id: string;
+  timestamp: number;
+  reason: string;
+}
+
 export class GeminiBudgetManager {
   private static instance: GeminiBudgetManager;
   private rpmLimit = 15;
@@ -23,7 +29,7 @@ export class GeminiBudgetManager {
   private minuteTimestamps: number[] = [];
   private currentDay = '';
   private dailyCount = 0;
-  private activeReservations: Set<string> = new Set();
+  private activeReservations: Map<string, ActiveReservation> = new Map();
   private persistPath = path.join(__dirname, '../../data/gemini-budget.json');
 
   private constructor() {
@@ -115,7 +121,7 @@ export class GeminiBudgetManager {
     const reservationId = `res_${now}_${Math.random().toString(36).substring(2, 7)}`;
     this.minuteTimestamps.push(now);
     this.dailyCount++;
-    this.activeReservations.add(reservationId);
+    this.activeReservations.set(reservationId, { id: reservationId, timestamp: now, reason });
     this.persistUsage();
 
     console.log(`[BUDGET] Слот атомарно зарезервирован [${reservationId}] ("${reason}"). RPM: ${this.minuteTimestamps.length}/${this.rpmLimit}, RPD: ${this.dailyCount}/${this.rpdLimit}`);
@@ -125,14 +131,37 @@ export class GeminiBudgetManager {
     };
   }
 
+  /**
+   * Accurately releases a specific reservation when a request fails or times out.
+   * Removes the EXACT timestamp associated with this reservation, preventing
+   * race condition corruption of RPM accounting during concurrent requests.
+   */
   public releaseReservation(reservationId: string): void {
-    if (this.activeReservations.has(reservationId)) {
-      this.activeReservations.delete(reservationId);
-      if (this.dailyCount > 0) this.dailyCount--;
-      this.minuteTimestamps.pop();
-      this.persistUsage();
-      console.log(`[BUDGET] Слот [${reservationId}] освобожден из-за ошибки/отмены`);
+    const reservation = this.activeReservations.get(reservationId);
+    if (!reservation) {
+      return;
     }
+
+    this.activeReservations.delete(reservationId);
+    if (this.dailyCount > 0) this.dailyCount--;
+
+    // Remove the exact timestamp associated with this reservation
+    const idx = this.minuteTimestamps.indexOf(reservation.timestamp);
+    if (idx !== -1) {
+      this.minuteTimestamps.splice(idx, 1);
+    }
+
+    this.persistUsage();
+    console.log(`[BUDGET] Слот [${reservationId}] освобожден из-за ошибки/отмены (timestamp: ${reservation.timestamp})`);
+  }
+
+  /**
+   * Commits the reservation when a request succeeds.
+   * Keeps the consumed quota in dailyCount and minuteTimestamps,
+   * and removes the entry from activeReservations.
+   */
+  public commitReservation(reservationId: string): void {
+    this.activeReservations.delete(reservationId);
   }
 
   public checkBudget(): BudgetStatus {

@@ -81,12 +81,24 @@ const saveAiSettingsBtn = document.getElementById('saveAiSettingsBtn');
 const dashboardTokenInput = document.getElementById('dashboardTokenInput');
 
 function getDashboardToken() {
-  return localStorage.getItem('dota_dashboard_token') || 'dashboard_secret_pass';
+  let token = localStorage.getItem('dota_dashboard_token');
+  if (!token) {
+    token = prompt('Требуется Dashboard Auth Token для доступа. Введите токен из ai-config.json или консоли сервера:');
+    if (token) {
+      token = token.trim();
+      localStorage.setItem('dota_dashboard_token', token);
+    } else {
+      token = '';
+    }
+  }
+  return token;
 }
 
 function setDashboardToken(token) {
   if (token) {
     localStorage.setItem('dota_dashboard_token', token.trim());
+  } else {
+    localStorage.removeItem('dota_dashboard_token');
   }
 }
 
@@ -165,10 +177,15 @@ document.body.addEventListener('click', () => {
 
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const token = encodeURIComponent(getDashboardToken());
-  const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
+  const token = getDashboardToken();
+  const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-  ws = new WebSocket(wsUrl);
+  // Prefer Sec-WebSocket-Protocol ['dota-auth', token] so credentials are in headers, not exposed in query URL
+  try {
+    ws = token ? new WebSocket(wsUrl, ['dota-auth', token]) : new WebSocket(wsUrl);
+  } catch (err) {
+    ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
+  }
 
   ws.onopen = () => {
     statusDot.className = 'status-dot connected';

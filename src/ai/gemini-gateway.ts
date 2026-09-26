@@ -1,7 +1,7 @@
 import { ConfigManager } from './ai-config';
 import { SharedWorldModel, StrategicPlan } from '../engine/world-model';
 import { ContextBuilder } from '../engine/context-builder';
-import { D2PTDataStore } from '../engine/d2pt-store';
+import { ItemIdentity } from '../engine/item-identity';
 import { GeminiBudgetManager } from './gemini-budget-manager';
 
 export type GeminiErrorCode =
@@ -69,7 +69,7 @@ export class GeminiGateway {
    КРИТИЧЕСКОЕ ПРАВИЛО: НИКОГДА не предлагай предметы, которые УЖЕ куплены в инвентаре игрока!
 2. Опиши макро-перемещения, расстановку фарма, сплитпуш и опасные зоны.
 3. Опиши условия навязывания тимфайтов, тайминги вражеских ультимейтов, Рошана и байбека.
-Отвечай СТРОГО в формате валидного JSON объекта.`;
+Отвечай СТРОГО в формате валидного JSON объекта с обязательными полями: priority (string), targetObjective (string), targetItem (string), goldNeededForItem (number), avoidZones (string[]), safeZones (string[]), guidanceText (string), certainty (number).`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
       config.geminiModel
@@ -107,7 +107,6 @@ export class GeminiGateway {
       const latencyMs = Date.now() - startTime;
 
       if (!response.ok) {
-        // Release budget slot on HTTP error
         if (reservation.reservationId) {
           budgetManager.releaseReservation(reservation.reservationId);
         }
@@ -133,63 +132,76 @@ export class GeminiGateway {
       }
 
       const json = await response.json();
-      const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
+      const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
 
-      // Parse JSON from model
-      let parsedPlan: any = {};
+      // 2. Strict Fail-Closed JSON Parsing: Never synthesize fake fallback plan on invalid JSON
+      let parsedPlan: any = null;
       try {
         parsedPlan = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
-      } catch (parseErr) {
+      } catch (parseErr: any) {
         console.error('[Gemini Gateway JSON Parse Error] Raw text was:', rawText);
-        // Fallback to factual D2PT analysis
-        const fallbackAnalysis = D2PTDataStore.determineNextTargetItem(
-          model.player.heroName || model.player.heroCleanName,
-          model.player.inventory,
-          model.player.gold,
-          model.meta.clockTime
-        );
-
-        parsedPlan = {
-          priority: `Фарм ${fallbackAnalysis.targetItem.cleanName} по мете 7.41f`,
-          targetObjective: 'Контроль своей половины карты и безопасный фарм',
-          targetItem: fallbackAnalysis.targetItem.cleanName,
-          goldNeededForItem: fallbackAnalysis.goldRemaining,
-          avoidZones: ['Вражеский лес', 'Река'],
-          safeZones: ['Свой треугольник', 'Свой лес'],
-          guidanceText:
-            rawText.length > 50
-              ? rawText
-              : `Следующий ключевой слот по D2PT: ${fallbackAnalysis.targetItem.cleanName}. Дофармливайте его в безопасных зонах.`,
-          certainty: 0.9,
+        if (reservation.reservationId) {
+          budgetManager.releaseReservation(reservation.reservationId);
+        }
+        return {
+          success: false,
+          guidanceText: '⚠️ Модель Gemini вернула некорректный синтаксис JSON. План отклонён (Fail-Closed).',
+          modelUsed: config.geminiModel,
+          latencyMs,
+          error: 'INVALID_MODEL_OUTPUT',
+          errorDetails: `JSON Parse error: ${parseErr.message}. Output was: ${rawText.substring(0, 150)}`,
         };
       }
 
-      // Safeguard targetItem against already owned items
-      let targetItem = parsedPlan.targetItem || 'Следующий ключевой слот';
-      let goldNeeded = Number(parsedPlan.goldNeededForItem) || 1500;
+      // 3. Strict Schema Validation before plan adoption
+      const validation = this.validatePlanSchema(parsedPlan);
+      if (!validation.valid) {
+        console.error('[Gemini Gateway Schema Validation Failed]:', validation.errors);
+        if (reservation.reservationId) {
+          budgetManager.releaseReservation(reservation.reservationId);
+        }
+        return {
+          success: false,
+          guidanceText: `⚠️ Ответ модели не соответствует контракту StrategicPlan: ${validation.errors.join('; ')}`,
+          modelUsed: config.geminiModel,
+          latencyMs,
+          error: 'INVALID_MODEL_OUTPUT',
+          errorDetails: `Validation errors: ${validation.errors.join(', ')}`,
+        };
+      }
 
-      if (D2PTDataStore.isItemPurchased(targetItem, model.player.inventory)) {
-        const nextFix = D2PTDataStore.determineNextTargetItem(
-          model.player.heroName || model.player.heroCleanName,
-          model.player.inventory,
-          model.player.gold,
-          model.meta.clockTime
-        );
-        targetItem = nextFix.targetItem.cleanName;
-        goldNeeded = nextFix.goldRemaining;
+      // 4. Verification against already owned inventory items
+      if (ItemIdentity.satisfiesRequirement(parsedPlan.targetItem, model.player.inventory)) {
+        console.warn(`[Gemini Gateway] Модель предложила уже купленный предмет: "${parsedPlan.targetItem}"`);
+        if (reservation.reservationId) {
+          budgetManager.releaseReservation(reservation.reservationId);
+        }
+        return {
+          success: false,
+          guidanceText: `⚠️ План отклонён: предложенный предмет «${parsedPlan.targetItem}» уже есть в инвентаре игрока.`,
+          modelUsed: config.geminiModel,
+          latencyMs,
+          error: 'INVALID_MODEL_OUTPUT',
+          errorDetails: `Model recommended already owned item: ${parsedPlan.targetItem}`,
+        };
+      }
+
+      // 5. Successful plan creation: commit budget slot consumption
+      if (reservation.reservationId) {
+        budgetManager.commitReservation(reservation.reservationId);
       }
 
       const strategicPlan: StrategicPlan = {
         id: `plan_${Date.now()}`,
         createdAtClock: model.meta.clockTime,
-        priority: parsedPlan.priority || `Сборка ${targetItem} (Патч 7.41f)`,
-        targetObjective: parsedPlan.targetObjective || 'Контроль карты и фарм таймингов',
-        targetItem,
-        goldNeededForItem: goldNeeded,
-        avoidZones: Array.isArray(parsedPlan.avoidZones) ? parsedPlan.avoidZones : ['Вражеская половина', 'Река ночью'],
-        safeZones: Array.isArray(parsedPlan.safeZones) ? parsedPlan.safeZones : ['Свой треугольник', 'Основной лес'],
-        guidanceText: parsedPlan.guidanceText || 'Соблюдайте тайминги и избегайте необоснованных смертей без байбека.',
-        certainty: Number(parsedPlan.certainty ?? parsedPlan.confidence) || 0.92,
+        priority: parsedPlan.priority.trim(),
+        targetObjective: parsedPlan.targetObjective.trim(),
+        targetItem: parsedPlan.targetItem.trim(),
+        goldNeededForItem: Number(parsedPlan.goldNeededForItem),
+        avoidZones: parsedPlan.avoidZones,
+        safeZones: parsedPlan.safeZones,
+        guidanceText: parsedPlan.guidanceText.trim(),
+        certainty: Number(parsedPlan.certainty ?? 0.9),
         status: 'active',
       };
 
@@ -204,7 +216,6 @@ export class GeminiGateway {
       clearTimeout(timeoutHandle);
       const latencyMs = Date.now() - startTime;
 
-      // Release reserved budget slot on any abort or network exception
       if (reservation.reservationId) {
         budgetManager.releaseReservation(reservation.reservationId);
       }
@@ -236,23 +247,23 @@ export class GeminiGateway {
     if (typeof data.priority !== 'string' || !data.priority.trim()) {
       errors.push('priority must be a non-empty string');
     }
-    if (typeof data.targetObjective !== 'string') {
-      errors.push('targetObjective must be a string');
+    if (typeof data.targetObjective !== 'string' || !data.targetObjective.trim()) {
+      errors.push('targetObjective must be a non-empty string');
     }
-    if (typeof data.targetItem !== 'string') {
-      errors.push('targetItem must be a string');
+    if (typeof data.targetItem !== 'string' || !data.targetItem.trim()) {
+      errors.push('targetItem must be a non-empty string');
     }
-    if (typeof data.goldNeededForItem !== 'number') {
-      errors.push('goldNeededForItem must be a number');
+    if (typeof data.goldNeededForItem !== 'number' || isNaN(data.goldNeededForItem) || data.goldNeededForItem < 0) {
+      errors.push('goldNeededForItem must be a non-negative number');
     }
-    if (!Array.isArray(data.avoidZones)) {
-      errors.push('avoidZones must be an array');
+    if (!Array.isArray(data.avoidZones) || data.avoidZones.length === 0) {
+      errors.push('avoidZones must be a non-empty array of strings');
     }
-    if (!Array.isArray(data.safeZones)) {
-      errors.push('safeZones must be an array');
+    if (!Array.isArray(data.safeZones) || data.safeZones.length === 0) {
+      errors.push('safeZones must be a non-empty array of strings');
     }
-    if (typeof data.guidanceText !== 'string') {
-      errors.push('guidanceText must be a string');
+    if (typeof data.guidanceText !== 'string' || data.guidanceText.trim().length < 10) {
+      errors.push('guidanceText must be a detailed string (at least 10 chars)');
     }
     return {
       valid: errors.length === 0,

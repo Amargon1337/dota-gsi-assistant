@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyMapZone, parseTowerCounts, StateEngine } from '../src/engine/state-engine';
+import { classifyMapZone, parseTowerCounts, StateEngine, calculateHeuristicNetworthCurve, calculateExpectedNetworth } from '../src/engine/state-engine';
 import { D2PTDataStore } from '../src/engine/d2pt-store';
 import { ItemIdentity } from '../src/engine/item-identity';
 import { GeminiBudgetManager } from '../src/ai/gemini-budget-manager';
@@ -116,6 +116,9 @@ test('D. Factual D2PT Resolver & Honest Availability (7.41f)', () => {
   assert.equal(meta.hero, 'Juggernaut');
   assert.equal(meta.patch, '7.41f');
   assert.ok(meta.coreBuild.length >= 4);
+  assert.ok(meta.sourceUrl?.startsWith('https://dota2protracker.com'));
+  assert.equal(meta.extractionMethod, 'static_snapshot');
+  assert.ok(typeof meta.dataAgeDays === 'number');
 
   // Honest fallback: Non-existent hero returns null
   const missingHero = D2PTDataStore.getHeroMeta('non_existent_hero_xyz');
@@ -128,7 +131,9 @@ test('D. Factual D2PT Resolver & Honest Availability (7.41f)', () => {
     600
   );
   assert.equal(fallback.d2ptAvailable, false);
-  assert.equal(fallback.targetItem.name, 'black_king_bar');
+  assert.equal(fallback.targetItem, null);
+  assert.equal(fallback.recommendationSource, 'none');
+  assert.equal(fallback.timingStatus, null);
 });
 
 test('E. Item Identity & Distinct Boots (Phase != Treads, Upgrades Fulfill)', () => {
@@ -147,6 +152,13 @@ test('E. Item Identity & Distinct Boots (Phase != Treads, Upgrades Fulfill)', ()
   assert.equal(ItemIdentity.isExactItemPurchased('yasha', ['item_manta']), true);
   assert.equal(ItemIdentity.isExactItemPurchased('dragon_lance', ['item_hurricane_pike']), true);
   assert.equal(ItemIdentity.isExactItemPurchased('blink', ['item_swift_blink']), true);
+
+  // Strict distinction: ownsExactItem vs satisfiesRequirement
+  assert.equal(ItemIdentity.satisfiesRequirement('yasha', ['item_manta']), true);
+  assert.equal(ItemIdentity.ownsExactItem('yasha', ['item_manta']), false);
+  assert.equal(ItemIdentity.ownsExactItem('manta', ['item_manta']), true);
+  assert.equal(ItemIdentity.satisfiesRequirement('blink', ['item_swift_blink']), true);
+  assert.equal(ItemIdentity.ownsExactItem('blink', ['item_swift_blink']), false);
 });
 
 test('F. Gemini Budget Manager (RPM & RPD limits with atomic reserveSlot)', () => {
@@ -451,4 +463,167 @@ test('O. Security Tokens Configuration Integrity', () => {
   assert.equal((publicCfg as any).gsiAuthToken, undefined);
   assert.equal((publicCfg as any).dashboardAuthToken, undefined);
   assert.ok(publicCfg.maskedKey !== undefined);
+});
+
+test('P. Concurrent Budget Reservation Release Precision', () => {
+  const bm = GeminiBudgetManager.getInstance();
+  bm.reset(5, 10);
+
+  // Reserve slot 1
+  const r1 = bm.reserveSlot('Request 1');
+  assert.ok(r1.allowed && r1.reservationId);
+
+  // Reserve slot 2
+  const r2 = bm.reserveSlot('Request 2');
+  assert.ok(r2.allowed && r2.reservationId);
+
+  // Reserve slot 3
+  const r3 = bm.reserveSlot('Request 3');
+  assert.ok(r3.allowed && r3.reservationId);
+
+  // Status should show 3 requests used
+  assert.equal(bm.getStatus().rpmUsed, 3);
+
+  // Release middle reservation r2
+  bm.releaseReservation(r2.reservationId);
+  assert.equal(bm.getStatus().rpmUsed, 2);
+
+  // Release r1
+  bm.releaseReservation(r1.reservationId);
+  assert.equal(bm.getStatus().rpmUsed, 1);
+
+  // Releasing non-existent reservation is a safe no-op
+  bm.releaseReservation('invalid_reservation_id');
+  assert.equal(bm.getStatus().rpmUsed, 1);
+
+  // Release r3
+  bm.releaseReservation(r3.reservationId);
+  assert.equal(bm.getStatus().rpmUsed, 0);
+
+  // Restore limits
+  bm.reset(15, 500);
+});
+
+test('Q. Gemini Gateway Fail-Closed on Malformed JSON & Schema Errors', async () => {
+  const originalFetch = global.fetch;
+  const bm = GeminiBudgetManager.getInstance();
+  bm.reset(10, 50);
+
+  const cfg = ConfigManager.get();
+  const originalKey = cfg.geminiApiKey;
+  // Ensure an API key is set so it doesn't fail on missing API key check
+  cfg.geminiApiKey = 'test_api_key_mocked';
+
+  const model = createInitialWorldModel();
+  model.player.heroCleanName = 'Juggernaut';
+  model.player.inventory = ['item_boots', 'item_manta'];
+
+  try {
+    const initialUsed = bm.getStatus().rpmUsed;
+
+    // 1. Mock fetch returning broken JSON
+    global.fetch = (async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: 'Broken JSON: { priority: "Push", targetObjective: ' }] } }],
+        }),
+      } as any;
+    }) as any;
+
+    const brokenJsonResult = await GeminiGateway.generateStrategicPlan(model, 'Test broken JSON');
+    assert.equal(brokenJsonResult.success, false);
+    assert.equal(brokenJsonResult.error, 'INVALID_MODEL_OUTPUT');
+    // Verify budget reservation was released
+    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+
+    // 2. Mock fetch returning valid JSON but missing required fields
+    global.fetch = (async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ priority: 12345, goldNeededForItem: 'invalid' }) }] } }],
+        }),
+      } as any;
+    }) as any;
+
+    const schemaFailResult = await GeminiGateway.generateStrategicPlan(model, 'Test invalid schema');
+    assert.equal(schemaFailResult.success, false);
+    assert.equal(schemaFailResult.error, 'INVALID_MODEL_OUTPUT');
+    // Verify budget reservation was released
+    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+
+    // 3. Mock fetch returning plan that recommends an item already owned in inventory ('Manta Style')
+    global.fetch = (async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      priority: 'Сборка Manta',
+                      targetObjective: 'Сплитпуш',
+                      targetItem: 'Manta Style',
+                      goldNeededForItem: 0,
+                      avoidZones: ['Enemy Jungle'],
+                      safeZones: ['Radiant Main Jungle'],
+                      guidanceText: 'Купите Манту для пуша линий',
+                      certainty: 0.9,
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      } as any;
+    }) as any;
+
+    const ownedItemResult = await GeminiGateway.generateStrategicPlan(model, 'Test already owned');
+    assert.equal(ownedItemResult.success, false);
+    assert.equal(ownedItemResult.error, 'INVALID_MODEL_OUTPUT');
+    assert.ok(ownedItemResult.guidanceText?.includes('уже есть в инвентаре'));
+    // Verify budget reservation was released
+    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+  } finally {
+    global.fetch = originalFetch;
+    cfg.geminiApiKey = originalKey;
+    bm.reset(15, 500);
+  }
+});
+
+test('R. SharedWorldModel observationMode & Heuristic Networth Curve Baseline', () => {
+  const model = createInitialWorldModel();
+  assert.equal(model.observationMode, 'player_gsi_fow_restricted');
+
+  // Verify StateEngine sets observationMode correctly
+  const engine = new StateEngine();
+  const stateMgr = new StateManager();
+
+  const normalPayload: GsiRawPayload = {
+    provider: { name: 'Dota 2', appid: 570, version: 1, timestamp: 123456 },
+    map: { clock_time: 120, game_state: 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS' },
+    player: { team_name: 'radiant', gold: 1000, net_worth: 1000 },
+    hero: { name: 'npc_dota_hero_juggernaut', level: 3, alive: true, health: 800, max_health: 800 },
+  };
+
+  stateMgr.update(normalPayload);
+  const updatedModel = engine.process(normalPayload, stateMgr.getLatestState());
+  assert.equal(updatedModel.observationMode, 'player_gsi_fow_restricted');
+
+  // Heuristic Networth Curve testing
+  assert.equal(calculateHeuristicNetworthCurve(0), 600);
+  assert.equal(calculateHeuristicNetworthCurve(300), 2600); // 5 min: 600 + 5 * 400
+  assert.equal(calculateHeuristicNetworthCurve(900), 7850); // 15 min: 4600 + 5 * 650
+  assert.equal(calculateHeuristicNetworthCurve(1500), 15350); // 25 min: 11100 + 5 * 850
+
+  // Alias equivalence
+  assert.equal(calculateExpectedNetworth(300), calculateHeuristicNetworthCurve(300));
+  assert.equal(calculateExpectedNetworth(900), calculateHeuristicNetworthCurve(900));
 });
