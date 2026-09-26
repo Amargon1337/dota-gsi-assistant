@@ -10,6 +10,7 @@
     "generate-cfg": "ts-node src/tools/generate-cfg.ts",
     "mock": "ts-node src/mock/run-mock.ts",
     "laya": "python laya_service.py",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create_desktop_shortcut.ps1",
     "test": "ts-node tests/assistant.test.ts"
   },
   "keywords": [

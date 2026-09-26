@@ -21,6 +21,10 @@
             <span class="status-dot"></span>
             <span class="status-text">Ожидание Dota 2...</span>
           </div>
+          <div class="vision-status-badge" id="visionStatusBadge" style="font-size: 11px; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);">
+            <span class="vision-dot" id="visionDot" style="width: 7px; height: 7px; border-radius: 50%; background: #e74c3c; display: inline-block;"></span>
+            <span id="visionStatusText" style="color: #95a5a6; font-weight: 500;">👁️ Vision: Проверка...</span>
+          </div>
         </div>
       </div>
 
@@ -30,6 +34,7 @@
           <div class="day-night-icon" id="dayNightIcon" title="Смена дня и ночи">☀️</div>
           <div class="clock-value" id="gameClock">00:00</div>
           <div class="day-night-countdown" id="dayNightCountdown">ночь через 05:00</div>
+          <div id="dayNightStatusVal" style="display: none;"></div>
         </div>
       </div>
 
@@ -193,76 +198,24 @@
           </div>
         </div>
 
-        <!-- Buyback Status Card -->
-        <div class="buyback-widget" id="buybackWidget">
-          <div class="buyback-top">
-            <div class="bb-status-label">
-              <span class="bb-indicator" id="bbIndicator"></span>
-              <span class="bb-text" id="bbStatusText">СТАТУС ВЫКУПА</span>
-            </div>
-            <div class="bb-badge" id="bbBadge">--</div>
-          </div>
-          <div class="buyback-metrics">
-            <div class="bb-col">
-              <span class="metric-label">Стоимость байбека:</span>
-              <span class="metric-val" id="bbCostVal">0g</span>
-            </div>
-            <div class="bb-col">
-              <span class="metric-label">Текущее золото:</span>
-              <span class="metric-val" id="currentGoldVal">0g</span>
-            </div>
-            <div class="bb-col highlight-col">
-              <span class="metric-label">Запас / Дефицит:</span>
-              <span class="metric-val" id="bbSurplusVal">0g</span>
-            </div>
-          </div>
-        </div>
-
         <div class="section-divider"></div>
 
-        <!-- Map & Zone Intelligence (Replaces Broken Radar with Real GSI Data) -->
-        <div class="card-title">
-          <span class="card-icon">🗺️</span>
-          <h3 class="subsection-title">Контроль карты и безопасность зон</h3>
+        <!-- ENEMY TRACKING (СЛЕЖКА ЗА ВРАГАМИ: Где и когда был враг) -->
+        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="card-icon">👁️</span>
+            <h3 class="subsection-title" style="margin: 0;">Слежка за врагами (Enemy Memory & Map Intelligence)</h3>
+          </div>
+          <span id="enemyTrackCountBadge" class="badge" style="font-size: 11px; background: rgba(255,255,255,0.08);">0 врагов</span>
         </div>
 
-        <div class="map-intelligence-widget">
-          <div class="zone-current-box">
-            <div class="zone-title-col">
-              <span class="zone-caption">ТЕКУЩАЯ ПОЗИЦИЯ:</span>
-              <span class="zone-name" id="currentZoneVal">База</span>
-            </div>
-            <span class="zone-risk-badge safe" id="zoneRiskBadge">БЕЗОПАСНО</span>
+        <div class="enemy-tracking-container" id="enemyTrackingContainer">
+          <div class="enemy-setup-bar" id="enemySetupBar" style="display: flex; gap: 8px; margin-bottom: 6px;">
+            <input type="text" id="enemySetupInput" class="form-control" placeholder="Вражеские герои через запятую (напр.: Axe, Lion, Invoker, PA, Pudge)..." style="font-size: 12px; flex: 1;">
+            <button id="enemySetupBtn" class="btn btn-sm btn-primary" style="white-space: nowrap;">➕ Добавить врагов</button>
           </div>
-
-          <div class="map-zones-matrix">
-            <div class="matrix-card safe-card">
-              <div class="matrix-header">
-                <span class="matrix-dot safe-dot"></span>
-                <span>Рекомендуемые зоны фарма</span>
-              </div>
-              <div class="matrix-content" id="safeZonesList">Свой треугольник, лес</div>
-            </div>
-
-            <div class="matrix-card danger-card">
-              <div class="matrix-header">
-                <span class="matrix-dot danger-dot"></span>
-                <span>Зоны повышенной опасности</span>
-              </div>
-              <div class="matrix-content" id="dangerZonesList">Вражеский лес, Река</div>
-            </div>
-          </div>
-
-          <div class="map-tactics-row">
-            <div class="tactic-item">
-              <span class="tactic-label">Вышки (Союзные / Вражеские):</span>
-              <span class="tactic-val" id="towersStatusVal">11 / 11</span>
-            </div>
-            <div class="tactic-item">
-              <span class="tactic-label">Тактический фактор:</span>
-              <span class="tactic-val" id="dayNightStatusVal">☀️ День (полный обзор 1800)</span>
-            </div>
-          </div>
+          <div class="empty-state" id="enemyEmptyState">Укажите врагов выше или включите Демо-режим для симуляции...</div>
+          <div class="enemy-cards-grid" id="enemyCardsGrid" style="display: none;"></div>
         </div>
 
       </section>

@@ -92,7 +92,7 @@ export class ObservationCollector {
       hasShadowBlade,
       threatScore: Math.min(10, threatScore),
       observationSource: input.source,
-      certainty: input.certainty ?? (input.source === 'gsi' ? 0.98 : input.source === 'mock' ? 0.95 : 0.6),
+      certainty: input.certainty ?? (input.source === 'gsi' ? 0.98 : input.source === 'cv' ? 0.92 : input.source === 'mock' ? 0.95 : 0.6),
       lastObservedAt: Date.now(),
       freshness: 'fresh',
     };

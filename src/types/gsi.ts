@@ -114,9 +114,11 @@ export interface GsiRawPayload {
   abilities?: Record<string, GsiAbility>;
   items?: Record<string, GsiItem>;
   buildings?: Record<string, any>;
+  draft?: Record<string, any>;
   auth?: {
     token?: string;
   };
+  [key: string]: any;
 }
 
 export interface TimedEventAlert {

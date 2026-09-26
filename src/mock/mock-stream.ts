@@ -54,6 +54,31 @@ export class MockStreamer {
       this.currentClock += 1;
       const payload = this.generatePayload(this.currentClock);
       this.stateManager.update(payload);
+
+      // Periodically refresh sightings for Sven and Lion in mock simulation
+      if (this.currentClock % 10 === 0 || this.currentClock === 336) {
+        const stateEngine = AdvisorService.getInstance().getStateEngine();
+        stateEngine.registerEnemySighting(
+          'npc_dota_hero_sven',
+          2800,
+          1500,
+          ['item_blink', 'item_echo_sabre', 'item_power_treads'],
+          11,
+          this.currentClock,
+          'mock',
+          0.95
+        );
+        stateEngine.registerEnemySighting(
+          'npc_dota_hero_lion',
+          2500,
+          2200,
+          ['item_tranquil_boots', 'item_blink'],
+          9,
+          this.currentClock - 3,
+          'mock',
+          0.95
+        );
+      }
     }, 1000);
   }
 
@@ -235,6 +260,15 @@ export class MockStreamer {
         dota_goodguys_tower2_mid: { health: 2000, max_health: 2000 },
         dota_goodguys_tower3_mid: { health: 2000, max_health: 2000 },
         dota_badguys_tower1_mid: { health: clock > 350 ? 0 : 500, max_health: 1800 },
+      },
+      draft: {
+        team3: {
+          hero0: { name: 'npc_dota_hero_sven' },
+          hero1: { name: 'npc_dota_hero_lion' },
+          hero2: { name: 'npc_dota_hero_axe' },
+          hero3: { name: 'npc_dota_hero_pudge' },
+          hero4: { name: 'npc_dota_hero_crystal_maiden' },
+        },
       },
       auth: {
         token: 'dota_assistant_token_77',

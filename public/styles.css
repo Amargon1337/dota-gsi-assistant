@@ -938,8 +938,276 @@ body {
 /* Footer */
 .app-footer { margin-top: 14px; text-align: center; font-size: 11px; color: var(--text-muted); }
 
+/* Enemy Tracking Styles */
+.enemy-tracking-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.enemy-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.enemy-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.enemy-card.observed {
+  border-left: 4px solid #2ecc71;
+  background: rgba(46, 204, 113, 0.05);
+}
+
+.enemy-card.inferred {
+  border-left: 4px solid #f1c40f;
+  background: rgba(241, 196, 15, 0.05);
+}
+
+.enemy-card.unknown {
+  border-left: 4px solid #7f8c8d;
+  background: rgba(127, 140, 141, 0.05);
+  opacity: 0.75;
+}
+
+.enemy-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.enemy-hero-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f2f6;
+  letter-spacing: 0.5px;
+}
+
+.enemy-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.enemy-status-badge.observed {
+  background: rgba(46, 204, 113, 0.2);
+  color: #2ecc71;
+  border: 1px solid #2ecc71;
+}
+
+.enemy-status-badge.inferred {
+  background: rgba(241, 196, 15, 0.2);
+  color: #f1c40f;
+  border: 1px solid #f1c40f;
+}
+
+.enemy-status-badge.unknown {
+  background: rgba(127, 140, 141, 0.2);
+  color: #bdc3c7;
+  border: 1px solid #7f8c8d;
+}
+
+.enemy-card-location {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #dfe4ea;
+  font-weight: 500;
+}
+
+.enemy-card-location .zone-tag {
+  color: #70a1ff;
+  font-weight: 600;
+}
+
+.enemy-card-time {
+  font-size: 11px;
+  color: #a4b0be;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.enemy-card-threats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.threat-item-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.threat-item-tag.blink {
+  background: rgba(52, 152, 219, 0.25);
+  color: #70a1ff;
+  border: 1px solid #3498db;
+}
+
+.threat-item-tag.bkb {
+  background: rgba(230, 126, 34, 0.25);
+  color: #e67e22;
+  border: 1px solid #d35400;
+}
+
+.threat-item-tag.invis {
+  background: rgba(155, 89, 182, 0.25);
+  color: #bb6bd9;
+  border: 1px solid #9b59b6;
+}
+
+.threat-item-tag.general {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ced6e0;
+}
+
+.enemy-spot-actions {
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spot-title {
+  font-size: 10px;
+  color: #a4b0be;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.spot-buttons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.btn-spot {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #dfe4ea;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-spot:hover {
+  background: rgba(46, 204, 113, 0.25);
+  border-color: #2ecc71;
+  color: #2ecc71;
+}
+
+.btn-threat-pill {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #a4b0be;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-threat-pill.active {
+  background: rgba(243, 156, 18, 0.25);
+  border-color: #f39c12;
+  color: #f1c40f;
+}
+
 /* Responsive adjustments */
 @media (max-width: 1250px) {
   .dashboard-grid { grid-template-columns: 1fr; }
   .app-header { flex-direction: column; gap: 10px; }
 }
+
+/* Enemy Inventory Slots & Level Spikes */
+.enemy-inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.item-slot {
+  aspect-ratio: 40 / 28;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 20px;
+}
+
+.item-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.item-slot.threat-critical {
+  border: 1.5px solid #ff4757;
+  box-shadow: 0 0 8px rgba(255, 71, 87, 0.7);
+  animation: pulse-red 1.5s infinite alternate;
+}
+
+.item-slot.threat-high {
+  border: 1.5px solid #ffa502;
+  box-shadow: 0 0 6px rgba(255, 165, 2, 0.6);
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 4px rgba(255, 71, 87, 0.4); }
+  100% { box-shadow: 0 0 10px rgba(255, 71, 87, 0.9); }
+}
+
+.lvl-spike-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+  background: rgba(241, 196, 15, 0.2);
+  color: #f1c40f;
+  border: 1px solid #f1c40f;
+  box-shadow: 0 0 6px rgba(241, 196, 15, 0.4);
+}
+
+.threat-banner-spike {
+  background: linear-gradient(90deg, rgba(231, 76, 60, 0.35) 0%, rgba(192, 57, 43, 0.15) 100%);
+  border: 1px solid #e74c3c;
+  box-shadow: 0 0 15px rgba(231, 76, 60, 0.3);
+  animation: slideDown 0.3s ease;
+}
+

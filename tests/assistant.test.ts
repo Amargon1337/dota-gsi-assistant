@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import path from 'path';
 
 import { classifyMapZone, parseTowerCounts, StateEngine, calculateHeuristicNetworthCurve, calculateExpectedNetworth } from '../src/engine/state-engine';
 import { D2PTDataStore } from '../src/engine/d2pt-store';
@@ -840,4 +842,133 @@ test('V. AdvisorService.askManualQuestion() operates through manual pipeline', a
     cfg.geminiApiKey = origKey;
   }
 });
+
+test('W. Computer Vision Sightings Ingestion, Zone Mapping & Freshness', () => {
+  const collector = ObservationCollector.getInstance();
+  collector.reset();
+
+  // Ingest sighting from CV agent: Axe detected at Radiant Triangle coordinates
+  const cvTracker = collector.observeEnemy({
+    heroName: 'npc_dota_hero_axe',
+    x: -3000,
+    y: -1500,
+    clockTime: 500,
+    source: 'cv',
+    certainty: 0.94,
+    level: 7,
+    items: ['item_blink'],
+  }, 'radiant');
+
+  assert.equal(cvTracker.observationSource, 'cv');
+  assert.equal(cvTracker.certainty, 0.94);
+  assert.equal(cvTracker.heroNameClean, 'axe');
+  assert.equal(cvTracker.hasBlink, true);
+  assert.equal(cvTracker.lastKnownLocation.zoneName, 'Radiant Triangle');
+  assert.equal(cvTracker.freshness, 'fresh');
+  assert.equal(cvTracker.missingDurationSeconds, 0);
+
+  // Time advances 20s without sighting -> status transitions to stale
+  collector.updateClock(520);
+  const observations = collector.getObservationsRecord();
+  const axeObs = observations['npc_dota_hero_axe'];
+  assert.ok(axeObs);
+  assert.equal(axeObs.freshness, 'stale');
+  assert.equal(axeObs.missingDurationSeconds, 20);
+  assert.equal(axeObs.lastKnownLocation.zoneName, 'Radiant Triangle');
+
+  // Time advances 70s -> status transitions to expired
+  collector.updateClock(570);
+  const expiredObs = collector.getObservationsRecord()['npc_dota_hero_axe'];
+  assert.equal(expiredObs.freshness, 'expired');
+  assert.equal(expiredObs.missingDurationSeconds, 70);
+});
+
+test('X. SharedWorldModel observationMode supports hybrid_gsi_cv and visionDraft', () => {
+  const model = createInitialWorldModel();
+  assert.equal(model.observationMode, 'player_gsi_fow_restricted');
+
+  // Simulate CV activating hybrid mode
+  model.observationMode = 'hybrid_gsi_cv';
+  assert.equal(model.observationMode, 'hybrid_gsi_cv');
+
+  // Simulate Draft Vision recognition
+  model.visionDraft = {
+    radiantHeroes: ['antimage', 'puck', 'lion'],
+    direHeroes: ['axe', 'lina', 'slardar'],
+    lastUpdated: Date.now(),
+  };
+
+  assert.equal(model.visionDraft.radiantHeroes.length, 3);
+  assert.equal(model.visionDraft.direHeroes.length, 3);
+  assert.ok(model.visionDraft.direHeroes.includes('axe'));
+});
+
+test('Y. StateEngine Draft Heroes Ingestion and Enemy Memory Tracking', () => {
+  const engine = new StateEngine();
+  const rawWithDraft: GsiRawPayload = {
+    provider: { name: 'Dota 2', appid: 570, version: 1, timestamp: 100 },
+    map: { clock_time: 120, game_state: 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS', daytime: true },
+    player: { team_name: 'radiant', gold: 1200, net_worth: 1200 },
+    hero: { xpos: -1000, ypos: -1000, alive: true },
+    draft: {
+      team3: {
+        hero0: { name: 'npc_dota_hero_pudge' },
+        hero1: { name: 'npc_dota_hero_shadow_fiend' },
+      },
+    },
+  };
+
+  const processedState = new StateManager().update(rawWithDraft);
+  const worldModel = engine.process(rawWithDraft, processedState);
+
+  // Ingested enemy draft heroes must exist in worldModel.enemies
+  assert.ok(worldModel.enemies['npc_dota_hero_pudge']);
+  assert.ok(worldModel.enemies['npc_dota_hero_shadow_fiend']);
+  assert.equal(worldModel.enemies['npc_dota_hero_pudge'].heroNameClean, 'pudge');
+  assert.equal(worldModel.enemies['npc_dota_hero_pudge'].observationSource, 'inferred');
+
+  // Verify registering real sighting updates location and zone
+  engine.registerEnemySighting('npc_dota_hero_pudge', 2000, -2000, ['item_blink'], 6, 125, 'cv', 0.95);
+  const updatedModel = engine.process(rawWithDraft, processedState);
+  const pudge = updatedModel.enemies['npc_dota_hero_pudge'];
+  assert.equal(pudge.hasBlink, true);
+  assert.equal(pudge.lastKnownLocation.zoneName, 'River');
+  assert.equal(pudge.freshness, 'fresh');
+});
+
+test('Z. Scoreboard Vision Threat Item Spikes and Level Spikes Ingestion', () => {
+  const collector = ObservationCollector.getInstance();
+  collector.reset();
+
+  // 1. Ingest enemy Storm Spirit with Orchid and Axe with Blink via Scoreboard Vision
+  const stormTracker = collector.observeEnemy({
+    heroName: 'npc_dota_hero_storm_spirit',
+    level: 12,
+    items: ['item_orchid', 'item_power_treads', 'item_bottle'],
+    clockTime: 840,
+    source: 'cv',
+    certainty: 0.95,
+  }, 'radiant');
+
+  assert.equal(stormTracker.level, 12);
+  assert.ok(stormTracker.items.includes('item_orchid'));
+  assert.equal(stormTracker.observationSource, 'cv');
+
+  // 2. Verify threat items catalog is loaded and parses correctly
+  const threatPath = path.join(__dirname, '../data/threat_items.json');
+  assert.ok(fs.existsSync(threatPath));
+  const catalog = JSON.parse(fs.readFileSync(threatPath, 'utf-8'));
+  assert.ok(catalog['orchid']);
+  assert.equal(catalog['orchid'].severity, 'CRITICAL');
+  assert.equal(catalog['orchid'].category, 'INSTANT_DISABLE_AND_HEX');
+  assert.ok(catalog['blink']);
+  assert.equal(catalog['blink'].severity, 'CRITICAL');
+
+  // 3. Verify GameSessionManager reset cleanly wipes enemy observations
+  GameSessionManager.getInstance().fullReset('match_scoreboard_test');
+  const freshObs = collector.getObservationsRecord();
+  assert.equal(Object.keys(freshObs).length, 0);
+});
+
+
 

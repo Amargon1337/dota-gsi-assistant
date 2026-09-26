@@ -422,8 +422,61 @@ export class StateEngine {
       model.mapControl.dangerousZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle', 'Roshan Pit Area (River)'];
     }
 
-    // 10. Update Enemy Trackers via ObservationCollector
+    // 10. Update Enemy Trackers via ObservationCollector & Ingest Draft Heroes
     const collector = ObservationCollector.getInstance();
+
+    if (raw.draft) {
+      const enemyDraft = isRadiant ? (raw.draft.team3 || raw.draft.dire) : (raw.draft.team2 || raw.draft.radiant);
+      if (enemyDraft && typeof enemyDraft === 'object') {
+        for (const key of Object.keys(enemyDraft)) {
+          if (key.startsWith('hero') || key.startsWith('pick')) {
+            const val = (enemyDraft as any)[key];
+            const heroName = typeof val === 'string' ? val : val?.name || val?.heroName;
+            if (heroName && typeof heroName === 'string') {
+              const fullHeroName = heroName.startsWith('npc_dota_hero_') ? heroName : `npc_dota_hero_${heroName.toLowerCase()}`;
+              const existing = collector.getObservationsRecord()[fullHeroName.toLowerCase()];
+              if (!existing) {
+                collector.observeEnemy(
+                  {
+                    heroName: fullHeroName,
+                    clockTime: clock,
+                    source: 'inferred',
+                    certainty: 0.5,
+                    items: [],
+                  },
+                  teamName
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (model.visionDraft) {
+      const enemyDraftHeroes = isRadiant ? model.visionDraft.direHeroes : model.visionDraft.radiantHeroes;
+      if (Array.isArray(enemyDraftHeroes)) {
+        for (const h of enemyDraftHeroes) {
+          if (h && typeof h === 'string') {
+            const fullHeroName = h.startsWith('npc_dota_hero_') ? h : `npc_dota_hero_${h.toLowerCase()}`;
+            const existing = collector.getObservationsRecord()[fullHeroName.toLowerCase()];
+            if (!existing) {
+              collector.observeEnemy(
+                {
+                  heroName: fullHeroName,
+                  clockTime: clock,
+                  source: 'cv',
+                  certainty: 0.85,
+                  items: [],
+                },
+                teamName
+              );
+            }
+          }
+        }
+      }
+    }
+
     collector.updateClock(clock);
     model.enemies = collector.getObservationsRecord();
 

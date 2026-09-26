@@ -8,7 +8,7 @@ export interface MapZoneInfo {
   baseRisk: number; // 0.0 to 1.0
 }
 
-export type ObservationSource = 'gsi' | 'mock' | 'inferred' | 'unknown';
+export type ObservationSource = 'gsi' | 'cv' | 'mock' | 'inferred' | 'unknown';
 export type DataFreshness = 'fresh' | 'stale' | 'expired';
 
 export interface EnemyHeroTracker {
@@ -159,7 +159,7 @@ export interface AdviceOutcomeRecord {
 }
 
 export interface SharedWorldModel {
-  observationMode: 'player_gsi_fow_restricted' | 'spectator_gsi' | 'mock_simulation';
+  observationMode: 'player_gsi_fow_restricted' | 'spectator_gsi' | 'mock_simulation' | 'hybrid_gsi_cv';
   meta: {
     matchId: string;
     serverTime: number;
@@ -203,6 +203,11 @@ export interface SharedWorldModel {
   };
   trends: EconomicTrends;
   enemies: Record<string, EnemyHeroTracker>;
+  visionDraft?: {
+    radiantHeroes: string[];
+    direHeroes: string[];
+    lastUpdated: number;
+  };
   mapControl: {
     alliedTowersAlive: number;
     enemyTowersAlive: number;
