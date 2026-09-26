@@ -16,10 +16,10 @@ export class MockStreamer {
 
     console.log('🧪 [Mock] Запущена расширенная симуляция матча (включая трекер врагов Sven и Lion)...');
 
-    // Seed mock enemies in StateEngine
+    // Seed mock enemies in StateEngine with observationSource: 'mock'
     const stateEngine = AdvisorService.getInstance().getStateEngine();
-    stateEngine.registerEnemySighting('npc_dota_hero_sven', 2800, 1500, ['item_blink', 'item_echo_sabre', 'item_power_treads'], 11, 310);
-    stateEngine.registerEnemySighting('npc_dota_hero_lion', 2500, 2200, ['item_tranquil_boots', 'item_blink'], 9, 320);
+    stateEngine.registerEnemySighting('npc_dota_hero_sven', 2800, 1500, ['item_blink', 'item_echo_sabre', 'item_power_treads'], 11, 310, 'mock', 0.95);
+    stateEngine.registerEnemySighting('npc_dota_hero_lion', 2500, 2200, ['item_tranquil_boots', 'item_blink'], 9, 320, 'mock', 0.95);
 
     this.timer = setInterval(() => {
       this.currentClock += 1;

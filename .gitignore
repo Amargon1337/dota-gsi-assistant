@@ -1,3 +1,11 @@
+node_modules/
+dist/
 ai-config.json
 .env
 .env.*
+*.log
+__pycache__/
+.venv/
+.vscode/
+.idea/
+*.pyc

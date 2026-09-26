@@ -1,0 +1,35 @@
+{
+  "hero": "Shadow Fiend",
+  "heroKey": "nevermore",
+  "dotaId": 11,
+  "patch": "7.41f",
+  "sampleSize": 6120,
+  "overallWinrate": 52.8,
+  "roles": ["Mid", "Carry (Safe Lane)"],
+  "facets": [
+    { "name": "Lasting Presence", "winrate": 53.5, "pickrate": 84.0, "description": "Снижение брони от пассивки сохраняется дольше и стакается" },
+    { "name": "Shadowmire", "winrate": 49.2, "pickrate": 16.0, "description": "Койлы замедляют передвижение и каст врагов" }
+  ],
+  "startingItems": ["circlet", "slippers", "branches", "branches", "tango", "faerie_fire"],
+  "coreBuild": [
+    { "name": "power_treads", "cleanName": "Power Treads", "cost": 1400, "expectedMinute": 5, "winrate": 53.1, "rationale": "Скорость атаки и переключение статов для фарма душ" },
+    { "name": "dragon_lance", "cleanName": "Dragon Lance", "cost": 1900, "expectedMinute": 9, "winrate": 54.4, "rationale": "Дальность атаки для безопасного позиционирования в драках" },
+    { "name": "manta", "cleanName": "Manta Style", "cost": 4600, "expectedMinute": 16, "winrate": 56.1, "rationale": "Ускорение сплитпуша иллюзиями с полными душами и снятие сайленса" },
+    { "name": "black_king_bar", "cleanName": "Black King Bar", "cost": 4050, "expectedMinute": 21, "winrate": 57.9, "rationale": "Критический спайк: реализация Requiem of Souls и неуязвимость к фокусу" },
+    { "name": "butterfly", "cleanName": "Butterfly", "cost": 5450, "expectedMinute": 26, "winrate": 59.4, "rationale": "Максимальный физический DPS и уклонение против вражеских керри" },
+    { "name": "satanic", "cleanName": "Satanic", "cost": 5050, "expectedMinute": 31, "winrate": 61.8, "rationale": "Моментальный отжор на фулл хп и второй развеивающий бафф" },
+    { "name": "swift_blink", "cleanName": "Swift Blink", "cost": 6800, "expectedMinute": 36, "winrate": 63.5, "rationale": "Мгновенный врыв на вражеских саппортов и сокрушительный урон" }
+  ],
+  "situationalItems": [
+    { "name": "silver_edge", "cleanName": "Silver Edge", "cost": 5450, "expectedMinute": 22, "rationale": "Отключение сильных пассивных способностей (Break против Spectre, Bristleback)" },
+    { "name": "skadi", "cleanName": "Eye of Skadi", "cost": 5300, "expectedMinute": 28, "rationale": "Урезание хила и вампиризма у вражеских танков" },
+    { "name": "nullifier", "cleanName": "Nullifier", "cost": 4375, "expectedMinute": 29, "rationale": "Снятие сейв-предметов саппортов" }
+  ],
+  "neutralItems": [
+    { "tier": 1, "recommended": ["duelist_gloves", "lance_of_pursuit", "pig_pole"] },
+    { "tier": 2, "recommended": ["grove_bow", "specialists_array", "vambrace"] },
+    { "tier": 3, "recommended": ["elven_tunic", "enchanted_quiver", "paladin_sword"] },
+    { "tier": 4, "recommended": ["ninja_gear", "telescope", "mind_breaker"] },
+    { "tier": 5, "recommended": ["apex", "pirate_hat", "desolator_2"] }
+  ]
+}

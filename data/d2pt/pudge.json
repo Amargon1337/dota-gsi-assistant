@@ -1,0 +1,33 @@
+{
+  "hero": "Pudge",
+  "heroKey": "pudge",
+  "dotaId": 14,
+  "patch": "7.41f",
+  "sampleSize": 7200,
+  "overallWinrate": 51.9,
+  "roles": ["Mid", "Offlane", "Support"],
+  "facets": [
+    { "name": "Fresh Meat", "winrate": 52.4, "pickrate": 79.0, "description": "Dismember увеличивает силу и урон от Rot за время удержания" },
+    { "name": "Flayer's Hook", "winrate": 48.7, "pickrate": 21.0, "description": "Хук наносит дополнительный урон от пройденного расстояния" }
+  ],
+  "startingItems": ["tango", "quelling_blade", "gauntlets", "circlet", "branches"],
+  "coreBuild": [
+    { "name": "tranquil_boots", "cleanName": "Tranquil Boots", "cost": 925, "expectedMinute": 5, "winrate": 51.5, "rationale": "Регенерация и мувспид для ротаций и компенсации урона Rot" },
+    { "name": "blink", "cleanName": "Blink Dagger", "cost": 2250, "expectedMinute": 12, "winrate": 54.8, "rationale": "Мгновенное сближение для неблокируемого Dismember" },
+    { "name": "aghanims_scepter", "cleanName": "Aghanim's Scepter", "cost": 4200, "expectedMinute": 19, "winrate": 57.3, "rationale": "Огромный радиус Rot, снижение регенерации врагов и вампиризм" },
+    { "name": "black_king_bar", "cleanName": "Black King Bar", "cost": 4050, "expectedMinute": 24, "winrate": 59.2, "rationale": "Несбиваемый ультимейт в тимфайтах" },
+    { "name": "shivas_guard", "cleanName": "Shiva's Guard", "cost": 5175, "expectedMinute": 30, "winrate": 61.4, "rationale": "Броня против физики и синергия с магическим уроном Rot" }
+  ],
+  "situationalItems": [
+    { "name": "pipe", "cleanName": "Pipe of Insight", "cost": 3375, "expectedMinute": 21, "rationale": "Защита команды от плотного магического прокаста" },
+    { "name": "lotus_orb", "cleanName": "Lotus Orb", "cost": 3850, "expectedMinute": 26, "rationale": "Сброс сайленса и отражение таргетных станов" },
+    { "name": "heart", "cleanName": "Heart of Tarrasque", "cost": 5100, "expectedMinute": 33, "rationale": "Максимальный пул HP для масштабирования урона от Dismember" }
+  ],
+  "neutralItems": [
+    { "tier": 1, "recommended": ["seeds_of_serenity", "occult_bracelet", "arcane_ring"] },
+    { "tier": 2, "recommended": ["vambrace", "dragon_scale", "eye_of_the_vizier"] },
+    { "tier": 3, "recommended": ["ogre_seal_totem", "craggy_coat", "paladin_sword"] },
+    { "tier": 4, "recommended": ["havoc_hammer", "timeless_relic", "trickster_cloak"] },
+    { "tier": 5, "recommended": ["giants_ring", "force_boots", "mirror_shield"] }
+  ]
+}

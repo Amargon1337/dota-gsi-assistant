@@ -2,14 +2,18 @@ import { ConfigManager } from './ai-config';
 import { SharedWorldModel } from '../engine/world-model';
 import { ContextBuilder } from '../engine/context-builder';
 
+export type GankRiskLevel = 'safe' | 'caution' | 'dangerous' | 'critical';
+
 export interface LayaCognitiveResult {
   available: boolean;
   latencyMs: number;
-  gankRisk: number; // 0.0 to 1.0 probability
+  gankRiskLevel: GankRiskLevel;
+  riskScore: number; // 0.0 to 1.0 derived from model distribution
   tacticalAction: 'farm_safe' | 'push_lane' | 'roshan' | 'teamfight' | 'retreat';
-  confidence: number;
+  certainty: number; // 0.0 to 1.0
   planSafety: 'safe' | 'compromised' | 'critical_violation';
   escalateToGemini: boolean;
+  escalationReason?: string;
   raw?: any;
 }
 
@@ -27,8 +31,13 @@ export class LayaClient {
       questions: {
         tactical_action: {
           type: 'choice',
-          instructions: 'What is the immediate optimal macro action?',
+          instructions: 'What is the immediate optimal macro action for the hero?',
           criteria: ['farm_safe', 'push_lane', 'roshan', 'teamfight', 'retreat'],
+        },
+        gank_risk: {
+          type: 'choice',
+          instructions: 'Assess the immediate gank risk level for the player based on missing enemies, hero status, position, and daylight.',
+          criteria: ['safe', 'caution', 'dangerous', 'critical'],
         },
         plan_safety: {
           type: 'choice',
@@ -59,18 +68,42 @@ export class LayaClient {
       const answers = json.answers || {};
 
       const tacticalAction = answers.tactical_action?.choice ?? 'farm_safe';
-      const confidence = answers.tactical_action?.answer_confidence ?? answers.tactical_action?.confidence ?? 0.82;
+      const gankChoice: GankRiskLevel = answers.gank_risk?.choice ?? 'safe';
       const planSafety = answers.plan_safety?.choice ?? 'safe';
-      const gankRisk = planSafety === 'critical_violation' ? 0.85 : (planSafety === 'compromised' ? 0.50 : 0.15);
+
+      const actionConfidence = answers.tactical_action?.answer_confidence ?? answers.tactical_action?.confidence ?? 0.85;
+      const gankProbabilities = answers.gank_risk?.probabilities || {};
+
+      // Calculate model-grounded riskScore from probability distribution
+      let calculatedRiskScore = 0.15;
+      if (gankChoice === 'critical') {
+        calculatedRiskScore = 0.70 + (gankProbabilities.critical ?? 0.2) * 0.29;
+      } else if (gankChoice === 'dangerous') {
+        calculatedRiskScore = 0.50 + (gankProbabilities.dangerous ?? 0.1) * 0.20;
+      } else if (gankChoice === 'caution') {
+        calculatedRiskScore = 0.30 + (gankProbabilities.caution ?? 0.1) * 0.19;
+      } else {
+        calculatedRiskScore = Math.max(0.05, (1 - (gankProbabilities.safe ?? 0.9)) * 0.3);
+      }
+
+      const certainty = Math.round(actionConfidence * 100) / 100;
+      const shouldEscalate = planSafety === 'critical_violation' || gankChoice === 'critical';
+      const escalationReason = shouldEscalate
+        ? planSafety === 'critical_violation'
+          ? 'Laya зафиксировала критическое нарушение текущего стратегического плана.'
+          : 'Laya зафиксировала критический риск ганка вражеской командой.'
+        : undefined;
 
       return {
         available: true,
         latencyMs: Date.now() - startTime,
-        gankRisk,
+        gankRiskLevel: gankChoice,
+        riskScore: Math.round(calculatedRiskScore * 100) / 100,
         tacticalAction,
-        confidence: Math.round(confidence * 100) / 100,
+        certainty,
         planSafety,
-        escalateToGemini: planSafety === 'critical_violation',
+        escalateToGemini: shouldEscalate,
+        escalationReason,
         raw: answers,
       };
     } catch {
@@ -79,38 +112,47 @@ export class LayaClient {
   }
 
   private static heuristicFallback(model: SharedWorldModel, latencyMs: number): LayaCognitiveResult {
-    let gankRisk = 0.15;
-    const currentZone = model.player.currentZone;
+    const zoneInfo = model.player.zoneInfo;
     const isNight = !model.meta.isDaytime;
+    let riskScore = zoneInfo.baseRisk;
 
-    if (isNight) gankRisk += 0.2;
-    if (currentZone.includes('Enemy') || currentZone.includes('River')) gankRisk += 0.35;
-    if (model.player.hpPercent < 45) gankRisk += 0.25;
+    if (isNight) riskScore += 0.15;
+    if (model.player.hpPercent < 45) riskScore += 0.25;
 
-    // Check missing enemies with blink
     const missingBlinkEnemies = Object.values(model.enemies).filter(
-      (e) => e.hasBlink && e.missingDurationSeconds >= 20
+      (e) => e.hasBlink && e.missingDurationSeconds >= 20 && e.alive
     );
-    if (missingBlinkEnemies.length > 0) gankRisk += 0.3;
+    if (missingBlinkEnemies.length > 0) riskScore += 0.25;
 
+    riskScore = Math.min(0.99, Math.round(riskScore * 100) / 100);
+
+    let gankRiskLevel: GankRiskLevel = 'safe';
     let tacticalAction: 'farm_safe' | 'push_lane' | 'roshan' | 'teamfight' | 'retreat' = 'farm_safe';
     let planSafety: 'safe' | 'compromised' | 'critical_violation' = 'safe';
 
-    if (gankRisk > 0.75) {
+    if (riskScore >= 0.70) {
+      gankRiskLevel = 'critical';
       tacticalAction = 'retreat';
       planSafety = 'critical_violation';
-    } else if (gankRisk > 0.5) {
+    } else if (riskScore >= 0.50) {
+      gankRiskLevel = 'dangerous';
+      tacticalAction = 'retreat';
       planSafety = 'compromised';
+    } else if (riskScore >= 0.30) {
+      gankRiskLevel = 'caution';
+      tacticalAction = 'farm_safe';
     }
 
     return {
       available: false,
       latencyMs,
-      gankRisk: Math.min(0.98, Math.round(gankRisk * 100) / 100),
+      gankRiskLevel,
+      riskScore,
       tacticalAction,
-      confidence: 0.75,
+      certainty: 0.80,
       planSafety,
       escalateToGemini: planSafety === 'critical_violation',
+      escalationReason: planSafety === 'critical_violation' ? 'Критический эвристический риск ганка' : undefined,
     };
   }
 }

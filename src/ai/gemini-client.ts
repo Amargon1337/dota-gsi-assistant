@@ -1,7 +1,8 @@
 import { ConfigManager } from './ai-config';
 import { SharedWorldModel, StrategicPlan } from '../engine/world-model';
 import { ContextBuilder } from '../engine/context-builder';
-import { ProTrackerService } from '../engine/protracker-service';
+import { D2PTDataStore } from '../engine/d2pt-store';
+import { GeminiBudgetManager } from './gemini-budget-manager';
 
 export interface StrategicPlanResult {
   success: boolean;
@@ -27,6 +28,20 @@ export class GeminiClient {
         modelUsed: config.geminiModel,
         latencyMs: 0,
         error: 'NO_API_KEY',
+      };
+    }
+
+    // 1. Enforce Gemini Budget (RPM 15, RPD 500)
+    const budgetManager = GeminiBudgetManager.getInstance();
+    const budgetCheck = budgetManager.checkBudget();
+    if (!budgetCheck.allowed) {
+      console.warn(`[Gemini Budget Blocked] ${budgetCheck.reason}`);
+      return {
+        success: false,
+        guidanceText: `⚠️ Запрос отклонён менеджером квоты: ${budgetCheck.reason}`,
+        modelUsed: config.geminiModel,
+        latencyMs: 0,
+        error: 'QUOTA_EXCEEDED',
       };
     }
 
@@ -81,6 +96,9 @@ export class GeminiClient {
         };
       }
 
+      // Record successful budget consumption
+      budgetManager.recordUsage();
+
       const json = await response.json();
       const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
 
@@ -88,9 +106,9 @@ export class GeminiClient {
       let parsedPlan: any = {};
       try {
         parsedPlan = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
-      } catch (err) {
+      } catch {
         console.error('[Gemini JSON Parse Error] Raw text was:', rawText);
-        const fallbackAnalysis = ProTrackerService.determineNextTargetItem(
+        const fallbackAnalysis = D2PTDataStore.determineNextTargetItem(
           model.player.heroName || model.player.heroCleanName,
           model.player.inventory,
           model.player.gold,
@@ -104,8 +122,11 @@ export class GeminiClient {
           goldNeededForItem: fallbackAnalysis.goldRemaining,
           avoidZones: ['Вражеский лес', 'Река'],
           safeZones: ['Свой треугольник', 'Свой лес'],
-          guidanceText: rawText.length > 50 ? rawText : `Следующий ключевой слот по D2PT: ${fallbackAnalysis.targetItem.cleanName}. Дофармливайте его в безопасных зонах.`,
-          confidence: 0.9,
+          guidanceText:
+            rawText.length > 50
+              ? rawText
+              : `Следующий ключевой слот по D2PT: ${fallbackAnalysis.targetItem.cleanName}. Дофармливайте его в безопасных зонах.`,
+          certainty: 0.9,
         };
       }
 
@@ -113,8 +134,8 @@ export class GeminiClient {
       let targetItem = parsedPlan.targetItem || 'Следующий ключевой слот';
       let goldNeeded = Number(parsedPlan.goldNeededForItem) || 1500;
 
-      if (ProTrackerService.isItemPurchased(targetItem, model.player.inventory)) {
-        const nextFix = ProTrackerService.determineNextTargetItem(
+      if (D2PTDataStore.isItemPurchased(targetItem, model.player.inventory)) {
+        const nextFix = D2PTDataStore.determineNextTargetItem(
           model.player.heroName || model.player.heroCleanName,
           model.player.inventory,
           model.player.gold,
@@ -134,7 +155,7 @@ export class GeminiClient {
         avoidZones: Array.isArray(parsedPlan.avoidZones) ? parsedPlan.avoidZones : ['Вражеская половина', 'Река ночью'],
         safeZones: Array.isArray(parsedPlan.safeZones) ? parsedPlan.safeZones : ['Свой треугольник', 'Основной лес'],
         guidanceText: parsedPlan.guidanceText || 'Соблюдайте тайминги и избегайте необоснованных смертей без байбека.',
-        confidence: Number(parsedPlan.confidence) || 0.92,
+        certainty: Number(parsedPlan.certainty ?? parsedPlan.confidence) || 0.92,
         status: 'active',
       };
 

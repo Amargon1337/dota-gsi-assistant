@@ -1,0 +1,35 @@
+{
+  "hero": "Juggernaut",
+  "heroKey": "juggernaut",
+  "dotaId": 8,
+  "patch": "7.41f",
+  "sampleSize": 5420,
+  "overallWinrate": 53.6,
+  "roles": ["Carry (Safe Lane)"],
+  "facets": [
+    { "name": "Bladeform", "winrate": 54.2, "pickrate": 81.5, "description": "Постепенно накапливает Agility и Move Speed в бою" },
+    { "name": "Duelist", "winrate": 50.8, "pickrate": 18.5, "description": "Бонусный урон при атаке спереди" }
+  ],
+  "startingItems": ["quelling_blade", "tango", "circlet", "slippers", "branches"],
+  "coreBuild": [
+    { "name": "power_treads", "cleanName": "Power Treads", "cost": 1400, "expectedMinute": 5, "winrate": 54.1, "rationale": "Быстрые статы и скорость атаки для стадии лайнинга" },
+    { "name": "battlefury", "cleanName": "Battle Fury", "cost": 4100, "expectedMinute": 13, "winrate": 55.8, "rationale": "Ключевой артефакт фарма и клива для ускорения Net Worth" },
+    { "name": "manta", "cleanName": "Manta Style", "cost": 4600, "expectedMinute": 20, "winrate": 56.4, "rationale": "Снятие сайленса, сейв от таргетов и безопасный сплитпуш иллюзиями" },
+    { "name": "butterfly", "cleanName": "Butterfly", "cost": 5450, "expectedMinute": 27, "winrate": 58.7, "rationale": "Огромный прирост DPS, уклонение против вражеских керри" },
+    { "name": "blink", "cleanName": "Blink Dagger", "cost": 2250, "expectedMinute": 29, "winrate": 60.1, "rationale": "Мгновенное сокращение дистанции для сокрушительного Omnislash" },
+    { "name": "aghanims_scepter", "cleanName": "Aghanim's Scepter", "cost": 4200, "expectedMinute": 33, "winrate": 61.2, "rationale": "Swiftslash для быстрого убийства саппортов без траты ультимейта" }
+  ],
+  "situationalItems": [
+    { "name": "black_king_bar", "cleanName": "Black King Bar", "cost": 4050, "expectedMinute": 23, "rationale": "Обязателен при обилии мгновенного магического контроля и сайленсов" },
+    { "name": "abyssal_blade", "cleanName": "Abyssal Blade", "cost": 6250, "expectedMinute": 35, "rationale": "Мгновенный контроль сквозь BKB по мобильным целям" },
+    { "name": "nullifier", "cleanName": "Nullifier", "cost": 4375, "expectedMinute": 32, "rationale": "Снятие Ghost Scepter, Glimmer Cape, Eul's и Aeon Disk" },
+    { "name": "swift_blink", "cleanName": "Swift Blink", "cost": 6800, "expectedMinute": 38, "rationale": "Лейт-апгрейд блинка для максимального урона в Omnislash" }
+  ],
+  "neutralItems": [
+    { "tier": 1, "recommended": ["duelist_gloves", "broom_handle", "seeds_of_serenity"] },
+    { "tier": 2, "recommended": ["vambrace", "grove_bow", "specialists_array"] },
+    { "tier": 3, "recommended": ["elven_tunic", "paladin_sword", "mind_breaker"] },
+    { "tier": 4, "recommended": ["ninja_gear", "telescope", "trickster_cloak"] },
+    { "tier": 5, "recommended": ["apex", "pirate_hat", "mirror_shield"] }
+  ]
+}

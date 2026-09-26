@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "generate-cfg": "ts-node src/tools/generate-cfg.ts",
     "mock": "ts-node src/mock/run-mock.ts",
-    "laya": "python laya_service.py"
+    "laya": "python laya_service.py",
+    "test": "ts-node tests/assistant.test.ts"
   },
   "keywords": [
     "dota2",

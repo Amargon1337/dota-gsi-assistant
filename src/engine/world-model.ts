@@ -1,3 +1,16 @@
+export type ZoneAllegiance = 'ally' | 'enemy' | 'neutral';
+export type ZoneKind = 'base' | 'jungle' | 'triangle' | 'river' | 'lane' | 'roshan' | 'neutral_area';
+
+export interface MapZoneInfo {
+  name: string;
+  allegiance: ZoneAllegiance;
+  kind: ZoneKind;
+  baseRisk: number; // 0.0 to 1.0
+}
+
+export type ObservationSource = 'gsi' | 'mock' | 'inferred' | 'unknown';
+export type DataFreshness = 'fresh' | 'stale' | 'expired';
+
 export interface EnemyHeroTracker {
   id?: number;
   name: string;
@@ -7,7 +20,7 @@ export interface EnemyHeroTracker {
   respawnSeconds: number;
   lastSeenClockTime: number; // clock_time in seconds when last visible
   missingDurationSeconds: number;
-  lastKnownLocation: { x: number; y: number; zoneName: string };
+  lastKnownLocation: { x: number; y: number; zoneName: string; zoneInfo?: MapZoneInfo };
   lastKnownHpPercent: number;
   lastKnownManaPercent: number;
   items: string[];
@@ -15,7 +28,22 @@ export interface EnemyHeroTracker {
   hasBkb: boolean;
   hasShadowBlade: boolean;
   threatScore: number; // 0 to 10
+  observationSource: ObservationSource;
+  certainty: number; // 0.0 to 1.0 (calibrated or derived, not fake confidence)
+  lastObservedAt: number; // Unix epoch ms
+  freshness: DataFreshness;
 }
+
+export type PlanStatus =
+  | 'created'
+  | 'active'
+  | 'executing'
+  | 'safe'
+  | 'compromised'
+  | 'objective_achieved'
+  | 'completed'
+  | 'violated'
+  | 'abandoned';
 
 export interface StrategicPlan {
   id: string;
@@ -27,16 +55,17 @@ export interface StrategicPlan {
   avoidZones: string[];
   safeZones: string[];
   guidanceText: string;
-  confidence: number;
-  status: 'active' | 'violated' | 'completed' | 'abandoned';
+  certainty: number;
+  status: PlanStatus;
   violationReason?: string;
+  progressPercent?: number;
 }
 
 export interface ThreatEvaluation {
   id: string;
   level: 'low' | 'medium' | 'high' | 'critical';
   title: string;
-  confidence: number; // 0.0 to 1.0 (calibrated)
+  riskScore: number; // 0.0 to 1.0 (calibrated risk score, not pseudo-probability)
   recommendedAction: string;
   evidence: string[];
   timestampClock: number;
@@ -53,11 +82,13 @@ export interface SemanticGameEvent {
     | 'TOWER_DESTROYED'
     | 'PLAN_VIOLATED'
     | 'PLAN_CREATED'
+    | 'PLAN_COMPLETED'
     | 'HERO_DEATH'
     | 'ROSHAN_ALERT'
     | 'ZONE_CHANGE';
   severity: 'info' | 'warning' | 'critical';
   description: string;
+  identityKey?: string; // used for deduplication & throttling
   payload?: any;
 }
 
@@ -66,11 +97,59 @@ export interface EconomicTrends {
   networthDelta5m: number;
   xpDelta5m: number;
   goldPerMinute: number;
-  goldVelocityPerSec: number; // calculated over last 30s
-  expectedNetworthBenchmark: number; // expected benchmark for minute X
-  networthDifference: number; // now - expected
+  xpPerMinute: number;
+  pocketGoldDelta30s: number;
+  spendingDetected: number;
+  estimatedFarmVelocityPerSec: number; // calculated from Networth growth, not pocket gold
+  expectedNetworthBenchmark: number;
+  networthDifference: number; // networthNow - expectedBenchmark
   deathsLast10m: number;
   killsLast10m: number;
+}
+
+export interface PlayerStatusEffects {
+  silenced: boolean;
+  stunned: boolean;
+  disarmed: boolean;
+  magicImmune: boolean;
+  hexed: boolean;
+  muted: boolean;
+  breakApplied: boolean;
+  smokeActive: boolean;
+  hasDebuff: boolean;
+}
+
+export interface KeyCooldowns {
+  ultimate: { name: string; ready: boolean; cooldown: number; level: number };
+  bkb: { owned: boolean; ready: boolean; cooldown: number };
+  manta: { owned: boolean; ready: boolean; cooldown: number };
+  blink: { owned: boolean; ready: boolean; cooldown: number };
+  tp: { ready: boolean; cooldown: number; charges: number };
+}
+
+export interface TacticalActionState {
+  now: 'RETREAT' | 'FARM_SAFE' | 'PUSH_LANE' | 'TEAMFIGHT' | 'ROSHAN';
+  why: string[];
+  until: string;
+  riskScore: number;
+}
+
+export interface AdviceOutcomeRecord {
+  id: string;
+  timestamp: number;
+  clockTime: number;
+  adviceText: string;
+  recommendedAction: string;
+  initialPlayerState: {
+    hpPercent: number;
+    zone: string;
+    alive: boolean;
+    networth: number;
+  };
+  evaluatedAtClock?: number;
+  playerFollowedAction?: boolean;
+  result?: 'survived' | 'died' | 'farm_accelerated' | 'objective_secured' | 'neutral';
+  resultNotes?: string;
 }
 
 export interface SharedWorldModel {
@@ -84,6 +163,7 @@ export interface SharedWorldModel {
     dayNightCountdown: number;
   };
   player: {
+    team: 'radiant' | 'dire';
     heroName: string;
     heroCleanName: string;
     level: number;
@@ -101,9 +181,12 @@ export interface SharedWorldModel {
     lastHits: number;
     denies: number;
     currentZone: string;
+    zoneInfo: MapZoneInfo;
     coordinates: { x: number; y: number };
     inventory: string[];
     abilities: Array<{ name: string; level: number; cooldown: number; canCast: boolean; isUlt: boolean }>;
+    statusEffects: PlayerStatusEffects;
+    keyCooldowns: KeyCooldowns;
     buyback: {
       canBuyback: boolean;
       cost: number;
@@ -117,22 +200,25 @@ export interface SharedWorldModel {
     alliedTowersAlive: number;
     enemyTowersAlive: number;
     roshanStatus: string;
+    roshanTimerSeconds: number;
     roshanSpawnWindow?: { minTime: number; maxTime: number };
     currentSafeFarmZones: string[];
     dangerousZones: string[];
   };
   threats: ThreatEvaluation[];
+  tacticalActionState: TacticalActionState;
   strategy: {
     activePlan: StrategicPlan | null;
     previousPlans: StrategicPlan[];
     lastGeminiAnalysisTime: number;
   };
   recentEvents: SemanticGameEvent[];
+  outcomeHistory: AdviceOutcomeRecord[];
   leyaState: {
     lastInferenceLatencyMs: number;
     operationalPicture: string;
     immediateAction: string;
-    confidence: number;
+    riskScore: number;
   };
 }
 
@@ -148,6 +234,7 @@ export function createInitialWorldModel(): SharedWorldModel {
       dayNightCountdown: 0,
     },
     player: {
+      team: 'radiant',
       heroName: '',
       heroCleanName: 'Выбор героя',
       level: 1,
@@ -164,10 +251,34 @@ export function createInitialWorldModel(): SharedWorldModel {
       kda: { kills: 0, deaths: 0, assists: 0 },
       lastHits: 0,
       denies: 0,
-      currentZone: 'Base',
+      currentZone: 'Radiant Base',
+      zoneInfo: {
+        name: 'Radiant Base',
+        allegiance: 'ally',
+        kind: 'base',
+        baseRisk: 0.05,
+      },
       coordinates: { x: 0, y: 0 },
       inventory: [],
       abilities: [],
+      statusEffects: {
+        silenced: false,
+        stunned: false,
+        disarmed: false,
+        magicImmune: false,
+        hexed: false,
+        muted: false,
+        breakApplied: false,
+        smokeActive: false,
+        hasDebuff: false,
+      },
+      keyCooldowns: {
+        ultimate: { name: '', ready: false, cooldown: 0, level: 0 },
+        bkb: { owned: false, ready: false, cooldown: 0 },
+        manta: { owned: false, ready: false, cooldown: 0 },
+        blink: { owned: false, ready: false, cooldown: 0 },
+        tp: { ready: true, cooldown: 0, charges: 1 },
+      },
       buyback: {
         canBuyback: true,
         cost: 0,
@@ -180,7 +291,10 @@ export function createInitialWorldModel(): SharedWorldModel {
       networthDelta5m: 0,
       xpDelta5m: 0,
       goldPerMinute: 0,
-      goldVelocityPerSec: 0,
+      xpPerMinute: 0,
+      pocketGoldDelta30s: 0,
+      spendingDetected: 0,
+      estimatedFarmVelocityPerSec: 0,
       expectedNetworthBenchmark: 600,
       networthDifference: 0,
       deathsLast10m: 0,
@@ -191,21 +305,29 @@ export function createInitialWorldModel(): SharedWorldModel {
       alliedTowersAlive: 11,
       enemyTowersAlive: 11,
       roshanStatus: 'alive',
-      currentSafeFarmZones: ['Our Safe Jungle', 'Base'],
-      dangerousZones: ['River', 'Enemy Triangle', 'Enemy Jungle'],
+      roshanTimerSeconds: 0,
+      currentSafeFarmZones: ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle'],
+      dangerousZones: ['Dire Base', 'Dire Triangle', 'Dire Main Jungle', 'River'],
     },
     threats: [],
+    tacticalActionState: {
+      now: 'FARM_SAFE',
+      why: ['Начальная фаза матча', 'Все союзные вышки целы'],
+      until: 'Достижение 6 уровня или покупка первого артефакта',
+      riskScore: 0.1,
+    },
     strategy: {
       activePlan: null,
       previousPlans: [],
       lastGeminiAnalysisTime: 0,
     },
     recentEvents: [],
+    outcomeHistory: [],
     leyaState: {
       lastInferenceLatencyMs: 0,
       operationalPicture: 'Ожидание начала матча',
       immediateAction: 'farm_safe',
-      confidence: 0.9,
+      riskScore: 0.1,
     },
   };
 }

@@ -1,0 +1,33 @@
+{
+  "hero": "Anti-Mage",
+  "heroKey": "antimage",
+  "dotaId": 1,
+  "patch": "7.41f",
+  "sampleSize": 4120,
+  "overallWinrate": 52.1,
+  "roles": ["Carry (Safe Lane)"],
+  "facets": [
+    { "name": "Magebane's Mirror", "winrate": 52.8, "pickrate": 82.0, "description": "Counterspell отражает заклинания обратно во врагов" },
+    { "name": "Mana Thirst", "winrate": 48.9, "pickrate": 18.0, "description": "Получает бонус к урону за недостающую ману у врагов вокруг" }
+  ],
+  "startingItems": ["tango", "quelling_blade", "circlet", "slippers", "branches"],
+  "coreBuild": [
+    { "name": "power_treads", "cleanName": "Power Treads", "cost": 1400, "expectedMinute": 5, "winrate": 51.9, "rationale": "Переключение на интеллект для Blink и статы для фарма" },
+    { "name": "battlefury", "cleanName": "Battle Fury", "cost": 4100, "expectedMinute": 13, "winrate": 54.2, "rationale": "Основа ускорения фарма леса и сплитпуша" },
+    { "name": "manta", "cleanName": "Manta Style", "cost": 4600, "expectedMinute": 20, "winrate": 56.8, "rationale": "Иллюзии выжигают ману, сброс сайленса и пуш линий" },
+    { "name": "butterfly", "cleanName": "Butterfly", "cost": 5450, "expectedMinute": 26, "winrate": 59.3, "rationale": "Уклонение и скорость атаки для быстрого выжигания маны" },
+    { "name": "basher", "cleanName": "Skull Basher", "cost": 2875, "expectedMinute": 29, "winrate": 61.2, "rationale": "Блокировка вражеского каста и подготовка Abyssal Blade" },
+    { "name": "abyssal_blade", "cleanName": "Abyssal Blade", "cost": 3375, "expectedMinute": 34, "winrate": 63.8, "rationale": "Мгновенный стан сквозь BKB под Blink" }
+  ],
+  "situationalItems": [
+    { "name": "black_king_bar", "cleanName": "Black King Bar", "cost": 4050, "expectedMinute": 24, "rationale": "Против плотных AOE станов и дебаффов" },
+    { "name": "skadi", "cleanName": "Eye of Skadi", "cost": 5300, "expectedMinute": 30, "rationale": "Замедление и снижение лечения против танков" }
+  ],
+  "neutralItems": [
+    { "tier": 1, "recommended": ["duelist_gloves", "broom_handle", "seeds_of_serenity"] },
+    { "tier": 2, "recommended": ["vambrace", "grove_bow", "specialists_array"] },
+    { "tier": 3, "recommended": ["elven_tunic", "paladin_sword", "mind_breaker"] },
+    { "tier": 4, "recommended": ["ninja_gear", "telescope", "trickster_cloak"] },
+    { "tier": 5, "recommended": ["apex", "pirate_hat", "mirror_shield"] }
+  ]
+}

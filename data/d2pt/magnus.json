@@ -1,0 +1,34 @@
+{
+  "hero": "Magnus",
+  "heroKey": "magnus",
+  "dotaId": 97,
+  "patch": "7.41f",
+  "sampleSize": 3890,
+  "overallWinrate": 51.4,
+  "roles": ["Offlane", "Mid", "Carry"],
+  "facets": [
+    { "name": "Run Through", "winrate": 52.8, "pickrate": 74.5, "description": "Skewer наносит урон при столкновении с деревьями и станит дольше" },
+    { "name": "Reverse Reverse Polarity", "winrate": 47.9, "pickrate": 25.5, "description": "RP отталкивает врагов и замедляет" }
+  ],
+  "startingItems": ["tango", "quelling_blade", "gauntlets", "circlet", "branches"],
+  "coreBuild": [
+    { "name": "power_treads", "cleanName": "Power Treads", "cost": 1400, "expectedMinute": 6, "winrate": 52.1, "rationale": "Статы и скорость атаки под баффом Empower" },
+    { "name": "blink", "cleanName": "Blink Dagger", "cost": 2250, "expectedMinute": 12, "winrate": 55.4, "rationale": "Мгновенное позиционирование для идеального Reverse Polarity и Skewer" },
+    { "name": "harpoon", "cleanName": "Harpoon", "cost": 4500, "expectedMinute": 20, "winrate": 56.8, "rationale": "Притягивание врагов, статы и двойной удар под Empower" },
+    { "name": "black_king_bar", "cleanName": "Black King Bar", "cost": 4050, "expectedMinute": 25, "winrate": 58.9, "rationale": "Безопасный прокаст RP без риска быть законтренным в полёте" },
+    { "name": "refresher", "cleanName": "Refresher Orb", "cost": 5000, "expectedMinute": 32, "winrate": 63.4, "rationale": "Двойной Reverse Polarity и два Skewer выигрывают любую драку" },
+    { "name": "overwhelming_blink", "cleanName": "Overwhelming Blink", "cost": 6800, "expectedMinute": 37, "winrate": 64.8, "rationale": "Огромный AOE урон от силы и замедление при врыве" }
+  ],
+  "situationalItems": [
+    { "name": "force_staff", "cleanName": "Force Staff", "cost": 2200, "expectedMinute": 16, "rationale": "Комбо с Skewer для завоза под башню с увеличенной дистанции" },
+    { "name": "shivas_guard", "cleanName": "Shiva's Guard", "cost": 5175, "expectedMinute": 28, "rationale": "Снижение хила и броня против физического урона" },
+    { "name": "aghanims_scepter", "cleanName": "Aghanim's Scepter", "cost": 4200, "expectedMinute": 29, "rationale": "Усиленный Shockwave с возвратом и взрывом" }
+  ],
+  "neutralItems": [
+    { "tier": 1, "recommended": ["seeds_of_serenity", "occult_bracelet", "arcane_ring"] },
+    { "tier": 2, "recommended": ["vambrace", "bullwhip", "dragon_scale"] },
+    { "tier": 3, "recommended": ["craggy_coat", "ogre_seal_totem", "ceremonial_robe"] },
+    { "tier": 4, "recommended": ["ninja_gear", "havoc_hammer", "timeless_relic"] },
+    { "tier": 5, "recommended": ["giants_ring", "force_boots", "mirror_shield"] }
+  ]
+}

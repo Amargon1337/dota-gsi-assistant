@@ -1,0 +1,10 @@
+{
+  "geminiApiKey": "YOUR_GEMINI_API_KEY_HERE",
+  "geminiModel": "gemini-3.5-flash-lite",
+  "autoCoachEnabled": true,
+  "rateLimitSeconds": 15,
+  "rpmLimit": 15,
+  "rpdLimit": 500,
+  "layaUrl": "http://127.0.0.1:8000/v1/systemone",
+  "gsiAuthToken": "dota_assistant_token_77"
+}

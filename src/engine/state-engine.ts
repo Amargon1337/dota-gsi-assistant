@@ -1,5 +1,15 @@
 import { ProcessedGameState, GsiRawPayload } from '../types/gsi';
-import { WorldModelStore, SharedWorldModel, EnemyHeroTracker } from './world-model';
+import {
+  WorldModelStore,
+  SharedWorldModel,
+  EnemyHeroTracker,
+  MapZoneInfo,
+  ObservationSource,
+  PlayerStatusEffects,
+  KeyCooldowns,
+  ZoneAllegiance,
+  ZoneKind,
+} from './world-model';
 
 interface HistorySnapshot {
   clockTime: number;
@@ -13,38 +23,128 @@ interface HistorySnapshot {
   y: number;
 }
 
-export function determineMapZone(x: number, y: number, team: string = 'radiant'): string {
-  // Approximate Dota 2 map zones based on source 2 coordinates [-8000, +8000]
-  if (x < -5000 && y < -5000) return 'Radiant Base';
-  if (x > 5000 && y > 5000) return 'Dire Base';
+export function classifyMapZone(
+  x: number,
+  y: number,
+  playerTeam: 'radiant' | 'dire' = 'radiant'
+): MapZoneInfo {
+  const isRadiant = playerTeam === 'radiant';
 
-  // River runs roughly from top-left to bottom-right
-  const riverDist = Math.abs(x + y);
-  if (riverDist < 1200 && Math.abs(x) < 4000) {
-    if (x < -1500 && y < 1500) return 'Roshan Pit Area (River)';
-    return 'River';
+  // 1. Bases
+  if (x < -5000 && y < -5000) {
+    return {
+      name: 'Radiant Base',
+      allegiance: isRadiant ? 'ally' : 'enemy',
+      kind: 'base',
+      baseRisk: isRadiant ? 0.05 : 0.95,
+    };
+  }
+  if (x > 5000 && y > 5000) {
+    return {
+      name: 'Dire Base',
+      allegiance: isRadiant ? 'enemy' : 'ally',
+      kind: 'base',
+      baseRisk: isRadiant ? 0.95 : 0.05,
+    };
   }
 
-  // Triangles
-  if (x < -1000 && x > -4500 && y < 0 && y > -4500) return 'Radiant Triangle';
-  if (x > 1000 && x < 4500 && y > 0 && y < 4500) return 'Dire Triangle';
+  // 2. River and Roshan Pit
+  const riverDist = Math.abs(x + y);
+  if (riverDist < 1200 && Math.abs(x) < 4000) {
+    if ((x < -1500 && y < 1500) || (x > 1500 && y > -1500)) {
+      return {
+        name: 'Roshan Pit Area (River)',
+        allegiance: 'neutral',
+        kind: 'roshan',
+        baseRisk: 0.65,
+      };
+    }
+    return {
+      name: 'River',
+      allegiance: 'neutral',
+      kind: 'river',
+      baseRisk: 0.55,
+    };
+  }
 
-  // Jungles
-  if (x > 0 && x < 5000 && y < 0 && y > -6000) return 'Radiant Main Jungle';
-  if (x < 0 && x > -5000 && y > 0 && y < 6000) return 'Dire Main Jungle';
+  // 3. Triangles
+  if (x < -1000 && x > -4500 && y < 0 && y > -4500) {
+    return {
+      name: 'Radiant Triangle',
+      allegiance: isRadiant ? 'ally' : 'enemy',
+      kind: 'triangle',
+      baseRisk: isRadiant ? 0.15 : 0.75,
+    };
+  }
+  if (x > 1000 && x < 4500 && y > 0 && y < 4500) {
+    return {
+      name: 'Dire Triangle',
+      allegiance: isRadiant ? 'enemy' : 'ally',
+      kind: 'triangle',
+      baseRisk: isRadiant ? 0.75 : 0.15,
+    };
+  }
 
-  // Lanes
-  if (Math.abs(x - y) < 1500) return 'Mid Lane';
-  if (y > 4500) return 'Top Lane';
-  if (y < -4500) return 'Bottom Lane';
+  // 4. Main Jungles
+  if (x > 0 && x < 5000 && y < 0 && y > -6000) {
+    return {
+      name: 'Radiant Main Jungle',
+      allegiance: isRadiant ? 'ally' : 'enemy',
+      kind: 'jungle',
+      baseRisk: isRadiant ? 0.20 : 0.70,
+    };
+  }
+  if (x < 0 && x > -5000 && y > 0 && y < 6000) {
+    return {
+      name: 'Dire Main Jungle',
+      allegiance: isRadiant ? 'enemy' : 'ally',
+      kind: 'jungle',
+      baseRisk: isRadiant ? 0.70 : 0.20,
+    };
+  }
 
-  return 'Neutral Map Area';
+  // 5. Lanes
+  if (Math.abs(x - y) < 1500) {
+    return {
+      name: 'Mid Lane',
+      allegiance: 'neutral',
+      kind: 'lane',
+      baseRisk: 0.40,
+    };
+  }
+  if (y > 4500) {
+    return {
+      name: 'Top Lane',
+      allegiance: 'neutral',
+      kind: 'lane',
+      baseRisk: 0.45,
+    };
+  }
+  if (y < -4500) {
+    return {
+      name: 'Bottom Lane',
+      allegiance: 'neutral',
+      kind: 'lane',
+      baseRisk: 0.45,
+    };
+  }
+
+  return {
+    name: 'Neutral Map Area',
+    allegiance: 'neutral',
+    kind: 'neutral_area',
+    baseRisk: 0.35,
+  };
+}
+
+export function determineMapZone(x: number, y: number, team: string = 'radiant'): string {
+  const normTeam = team.toLowerCase().includes('dire') ? 'dire' : 'radiant';
+  return classifyMapZone(x, y, normTeam).name;
 }
 
 function calculateExpectedNetworth(clockSeconds: number): number {
   if (clockSeconds <= 0) return 600;
   const mins = clockSeconds / 60;
-  // Dynamic benchmark curve for competitive core
   if (mins < 10) {
     return Math.round(600 + mins * 400); // 400 GPM early
   } else if (mins < 20) {
@@ -54,7 +154,10 @@ function calculateExpectedNetworth(clockSeconds: number): number {
   }
 }
 
-export function parseTowerCounts(buildings: any, isRadiantPlayer: boolean): { alliedTowers: number; enemyTowers: number; hasTowerData: boolean } {
+export function parseTowerCounts(
+  buildings: any,
+  isRadiantPlayer: boolean
+): { alliedTowers: number; enemyTowers: number; hasTowerData: boolean } {
   let radiant = 0;
   let dire = 0;
   let foundAnyTower = false;
@@ -105,6 +208,7 @@ export function parseTowerCounts(buildings: any, isRadiantPlayer: boolean): { al
 export class StateEngine {
   private history: HistorySnapshot[] = [];
   private lastSampleClockTime = -999;
+  private lastGoldPocket = 600;
   private worldModelStore = WorldModelStore.getInstance();
 
   public process(raw: GsiRawPayload, processed: ProcessedGameState): SharedWorldModel {
@@ -124,27 +228,34 @@ export class StateEngine {
     model.meta.isDaytime = map.daytime ?? true;
     model.meta.dayNightCountdown = processed.calculated.nextDayNightSeconds;
 
-    // 2. Update Player
+    // 2. Team and Zone Classification
+    const teamName: 'radiant' | 'dire' = (player.team_name || 'radiant').toLowerCase().includes('dire')
+      ? 'dire'
+      : 'radiant';
+    model.player.team = teamName;
+
     const x = hero.xpos ?? 0;
     const y = hero.ypos ?? 0;
-    const currentZone = determineMapZone(x, y, player.team_name || 'radiant');
+    const zoneInfo = classifyMapZone(x, y, teamName);
+    model.player.currentZone = zoneInfo.name;
+    model.player.zoneInfo = zoneInfo;
+    model.player.coordinates = { x, y };
 
-    // Calculate true Net Worth in Dota 2:
-    // Valve's buyback formula: buyback_cost = 200 + Math.floor(networth / 13) => networth = (buyback_cost - 200) * 13
+    // 3. True Net Worth Calculation
     const bbCost = hero.buyback_cost ?? 0;
     let trueNetworth = 0;
     if (bbCost >= 200) {
       trueNetworth = (bbCost - 200) * 13;
     } else {
-      const earned = (player.gold_from_hero_kills ?? 0) +
-                     (player.gold_from_creep_kills ?? 0) +
-                     (player.gold_from_income ?? 0) +
-                     (player.gold_from_shared ?? 0);
+      const earned =
+        (player.gold_from_hero_kills ?? 0) +
+        (player.gold_from_creep_kills ?? 0) +
+        (player.gold_from_income ?? 0) +
+        (player.gold_from_shared ?? 0);
       trueNetworth = earned > 0 ? earned : (player.gold ?? 0);
     }
     if (player.net_worth) trueNetworth = player.net_worth;
     if ((player as any).networth) trueNetworth = (player as any).networth;
-    // Net worth can never be strictly lower than current gold
     if ((player.gold ?? 0) > trueNetworth) {
       trueNetworth = player.gold ?? 0;
     }
@@ -169,26 +280,71 @@ export class StateEngine {
     };
     model.player.lastHits = player.last_hits ?? 0;
     model.player.denies = player.denies ?? 0;
-    model.player.currentZone = currentZone;
-    model.player.coordinates = { x, y };
 
-    // Inventory strings
-    model.player.inventory = Object.values(raw.items || {})
-      .filter((i) => i.name && i.name !== 'empty')
-      .map((i) => i.name.replace('item_', ''));
+    // 4. Status Effects from GSI
+    model.player.statusEffects = {
+      silenced: Boolean(hero.silenced),
+      stunned: Boolean(hero.stunned),
+      disarmed: Boolean(hero.disarmed),
+      magicImmune: Boolean(hero.magicimmune),
+      hexed: Boolean(hero.hexed),
+      muted: Boolean(hero.muted),
+      breakApplied: Boolean(hero.break),
+      smokeActive: Boolean(hero.smoke),
+      hasDebuff: Boolean(hero.has_debuff),
+    };
 
-    // Abilities list
-    model.player.abilities = Object.values(raw.abilities || {})
-      .filter((a) => a.name)
-      .map((a) => ({
-        name: a.name.replace(/^[a-z]+_/, ''),
-        level: a.level,
-        cooldown: a.cooldown,
-        canCast: a.can_cast,
-        isUlt: Boolean(a.ultimate),
-      }));
+    // 5. Inventory & Key Item Cooldowns
+    const rawItems = Object.values(raw.items || {}).filter((i) => i.name && i.name !== 'empty');
+    model.player.inventory = rawItems.map((i) => i.name.replace('item_', ''));
 
-    // Buyback
+    // Key Cooldowns
+    const bkbItem = rawItems.find((i) => i.name.includes('black_king_bar'));
+    const mantaItem = rawItems.find((i) => i.name.includes('manta'));
+    const blinkItem = rawItems.find((i) => i.name.includes('blink'));
+    const tpItem = rawItems.find((i) => i.name.includes('tpscroll') || i.name.includes('travel_boots'));
+
+    const rawAbilities = Object.values(raw.abilities || {}).filter((a) => a.name);
+    model.player.abilities = rawAbilities.map((a) => ({
+      name: a.name.replace(/^[a-z]+_/, ''),
+      level: a.level,
+      cooldown: a.cooldown,
+      canCast: a.can_cast,
+      isUlt: Boolean(a.ultimate),
+    }));
+
+    const ultAbility = rawAbilities.find((a) => a.ultimate);
+
+    model.player.keyCooldowns = {
+      ultimate: {
+        name: ultAbility ? ultAbility.name.replace(/^[a-z]+_/, '') : '',
+        ready: ultAbility ? ultAbility.can_cast : false,
+        cooldown: ultAbility ? ultAbility.cooldown : 0,
+        level: ultAbility ? ultAbility.level : 0,
+      },
+      bkb: {
+        owned: Boolean(bkbItem),
+        ready: bkbItem ? (bkbItem.cooldown ?? 0) === 0 : false,
+        cooldown: bkbItem?.cooldown ?? 0,
+      },
+      manta: {
+        owned: Boolean(mantaItem),
+        ready: mantaItem ? (mantaItem.cooldown ?? 0) === 0 : false,
+        cooldown: mantaItem?.cooldown ?? 0,
+      },
+      blink: {
+        owned: Boolean(blinkItem),
+        ready: blinkItem ? (blinkItem.cooldown ?? 0) === 0 : false,
+        cooldown: blinkItem?.cooldown ?? 0,
+      },
+      tp: {
+        ready: tpItem ? (tpItem.cooldown ?? 0) === 0 : true,
+        cooldown: tpItem?.cooldown ?? 0,
+        charges: tpItem?.charges ?? 1,
+      },
+    };
+
+    // 6. Buyback Status
     model.player.buyback = {
       canBuyback: processed.calculated.buyback.canBuyback,
       cost: hero.buyback_cost ?? 0,
@@ -196,7 +352,19 @@ export class StateEngine {
       surplus: processed.calculated.buyback.goldSurplus,
     };
 
-    // 3. Sliding History & Trend Calculations
+    // 7. Roshan Status from GSI
+    const roshanStateRaw = map.roshan_state;
+    if (roshanStateRaw === 'alive') {
+      model.mapControl.roshanStatus = 'alive';
+      model.mapControl.roshanTimerSeconds = 0;
+    } else if (roshanStateRaw === 'respawn_base' || roshanStateRaw === 'respawn_variable') {
+      model.mapControl.roshanStatus = 'dead';
+      model.mapControl.roshanTimerSeconds = map.roshan_state_end_seconds ?? 0;
+    } else {
+      model.mapControl.roshanStatus = 'alive';
+    }
+
+    // 8. Sliding History & Economic Velocity Calculation
     if (clock - this.lastSampleClockTime >= 2) {
       this.lastSampleClockTime = clock;
       this.history.push({
@@ -211,17 +379,15 @@ export class StateEngine {
         y,
       });
 
-      // Keep up to 10 mins of history (300 snapshots)
       if (this.history.length > 300) {
         this.history.shift();
       }
     }
 
-    // Calculate trends from history buffer
     this.updateTrends(model, clock, player, trueNetworth);
 
-    // 4. Update Buildings & Tower Counts
-    const isRadiant = (player.team_name || 'radiant').toLowerCase() !== 'dire';
+    // 9. Update Towers and Map Control
+    const isRadiant = teamName === 'radiant';
     if (raw.buildings) {
       const towerStats = parseTowerCounts(raw.buildings, isRadiant);
       if (towerStats.hasTowerData) {
@@ -230,7 +396,6 @@ export class StateEngine {
       }
     }
 
-    // Set dynamic map control safe/danger zones based on team
     if (isRadiant) {
       model.mapControl.currentSafeFarmZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle'];
       model.mapControl.dangerousZones = ['Dire Base', 'Dire Triangle', 'Dire Main Jungle', 'Roshan Pit Area (River)'];
@@ -239,11 +404,18 @@ export class StateEngine {
       model.mapControl.dangerousZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle', 'Roshan Pit Area (River)'];
     }
 
-    // 5. Update Enemy Missing Durations
+    // 10. Update Enemy Trackers (Freshness, Missing Durations)
     for (const enemyKey of Object.keys(model.enemies)) {
       const enemy = model.enemies[enemyKey];
       if (clock > enemy.lastSeenClockTime) {
         enemy.missingDurationSeconds = clock - enemy.lastSeenClockTime;
+      }
+      if (enemy.missingDurationSeconds < 15) {
+        enemy.freshness = 'fresh';
+      } else if (enemy.missingDurationSeconds < 60) {
+        enemy.freshness = 'stale';
+      } else {
+        enemy.freshness = 'expired';
       }
     }
 
@@ -258,15 +430,12 @@ export class StateEngine {
     const currentDeaths = player.deaths ?? 0;
     const currentKills = player.kills ?? 0;
 
-    // Snapshot from 5 mins ago (approx 300 seconds)
     const targetClock5m = currentClock - 300;
     const snapshot5m = this.findClosestSnapshot(targetClock5m) || this.history[0];
 
-    // Snapshot from 30 secs ago for velocity
     const targetClock30s = currentClock - 30;
     const snapshot30s = this.findClosestSnapshot(targetClock30s) || this.history[0];
 
-    // Snapshot from 10 mins ago (600 seconds)
     const targetClock10m = currentClock - 600;
     const snapshot10m = this.findClosestSnapshot(targetClock10m) || this.history[0];
 
@@ -274,7 +443,17 @@ export class StateEngine {
     const xpDelta5m = Math.round(currentXp - snapshot5m.xp);
 
     const secondsDiff30s = Math.max(1, currentClock - snapshot30s.clockTime);
-    const goldVelocityPerSec = Math.round(((currentGold - snapshot30s.gold) / secondsDiff30s) * 10) / 10;
+    const pocketGoldDelta30s = currentGold - snapshot30s.gold;
+
+    // Detect item purchases (spending)
+    let spendingDetected = 0;
+    if (currentGold < this.lastGoldPocket - 250 && currentDeaths === snapshot30s.deaths) {
+      spendingDetected = this.lastGoldPocket - currentGold;
+    }
+    this.lastGoldPocket = currentGold;
+
+    // Estimated Farm Velocity: calculated from TRUE Net Worth growth rate, NOT volatile pocket gold!
+    const estimatedFarmVelocityPerSec = Math.max(0, Math.round(((currentNw - snapshot30s.networth) / secondsDiff30s) * 10) / 10);
 
     const expectedBenchmark = calculateExpectedNetworth(currentClock);
     const networthDiff = currentNw - expectedBenchmark;
@@ -284,7 +463,10 @@ export class StateEngine {
       networthDelta5m,
       xpDelta5m,
       goldPerMinute: player.gpm ?? 0,
-      goldVelocityPerSec,
+      xpPerMinute: player.xpm ?? 0,
+      pocketGoldDelta30s,
+      spendingDetected,
+      estimatedFarmVelocityPerSec,
       expectedNetworthBenchmark: expectedBenchmark,
       networthDifference: networthDiff,
       deathsLast10m: currentDeaths - snapshot10m.deaths,
@@ -313,15 +495,20 @@ export class StateEngine {
     y: number,
     items: string[],
     level: number,
-    clockTime: number
+    clockTime: number,
+    source: ObservationSource = 'mock',
+    certainty: number = 0.95
   ): void {
     const model = this.worldModelStore.getModel();
-    const zone = determineMapZone(x, y);
+    const zoneInfo = classifyMapZone(x, y, model.player.team);
 
     const hasBlink = items.some((i) => i.toLowerCase().includes('blink'));
     const hasBkb = items.some((i) => i.toLowerCase().includes('bkb') || i.toLowerCase().includes('black_king_bar'));
     const hasShadowBlade = items.some(
-      (i) => i.toLowerCase().includes('invis') || i.toLowerCase().includes('shadow_blade') || i.toLowerCase().includes('silver_edge')
+      (i) =>
+        i.toLowerCase().includes('invis') ||
+        i.toLowerCase().includes('shadow_blade') ||
+        i.toLowerCase().includes('silver_edge')
     );
 
     let threatScore = 3;
@@ -337,7 +524,7 @@ export class StateEngine {
       respawnSeconds: 0,
       lastSeenClockTime: clockTime,
       missingDurationSeconds: 0,
-      lastKnownLocation: { x, y, zoneName: zone },
+      lastKnownLocation: { x, y, zoneName: zoneInfo.name, zoneInfo },
       lastKnownHpPercent: 100,
       lastKnownManaPercent: 100,
       items,
@@ -345,6 +532,10 @@ export class StateEngine {
       hasBkb,
       hasShadowBlade,
       threatScore: Math.min(10, threatScore),
+      observationSource: source,
+      certainty,
+      lastObservedAt: Date.now(),
+      freshness: 'fresh',
     };
   }
 

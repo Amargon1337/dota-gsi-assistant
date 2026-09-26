@@ -247,7 +247,7 @@ function renderWorldModel(model) {
   if (model.trends) {
     const t = model.trends;
     nwDelta5mVal.textContent = `${t.networthDelta5m >= 0 ? '+' : ''}${t.networthDelta5m.toLocaleString()}g`;
-    goldVelocityVal.textContent = `${t.goldVelocityPerSec} g/s`;
+    goldVelocityVal.textContent = `${t.estimatedFarmVelocityPerSec ?? t.goldVelocityPerSec ?? 0} g/s`;
     expectedNwVal.textContent = `${t.expectedNetworthBenchmark.toLocaleString()}g`;
     gpmVal.textContent = `${t.goldPerMinute || 0}`;
 
@@ -278,26 +278,33 @@ function renderWorldModel(model) {
     }
   }
 
-  // 5. Threat Evaluation (Leya System-1)
+  // 5. Threat Evaluation & Tactical Action State (NOW / WHY / UNTIL)
   if (model.threats && model.threats.length > 0) {
     const topThreat = model.threats[0];
     threatAlertBox.style.display = 'block';
     threatBadge.textContent = topThreat.level.toUpperCase();
     threatTitle.textContent = topThreat.title;
-    const pct = Math.round(topThreat.confidence * 100);
+    const score = topThreat.riskScore ?? topThreat.confidence ?? 0.5;
+    const pct = Math.round(score * 100);
     threatConfidenceVal.textContent = `${pct}%`;
     threatConfFill.style.width = `${pct}%`;
-    threatActionText.textContent = topThreat.recommendedAction;
+
+    const actionState = model.tacticalActionState;
+    if (actionState) {
+      threatActionText.textContent = `${actionState.now}: ${topThreat.recommendedAction} (Цель: ${actionState.until})`;
+    } else {
+      threatActionText.textContent = topThreat.recommendedAction;
+    }
 
     threatEvidenceList.innerHTML = '';
-    topThreat.evidence.forEach(ev => {
+    (actionState?.why || topThreat.evidence).forEach(ev => {
       const tag = document.createElement('span');
       tag.className = 'evidence-tag';
       tag.textContent = `✔ ${ev}`;
       threatEvidenceList.appendChild(tag);
     });
 
-    if (topThreat.id !== lastSpokenThreatId && topThreat.confidence >= 0.75) {
+    if (topThreat.id !== lastSpokenThreatId && score >= 0.75) {
       lastSpokenThreatId = topThreat.id;
       speakText(`${topThreat.title}. ${topThreat.recommendedAction}`);
     }
@@ -305,7 +312,7 @@ function renderWorldModel(model) {
     threatAlertBox.style.display = 'none';
   }
 
-  // 6. Active Strategic Plan (Gemini System-2)
+  // 6. Active Strategic Plan (Gemini System-2 ⇄ D2PT)
   if (model.strategy?.activePlan) {
     const plan = model.strategy.activePlan;
     planPriorityTitle.textContent = plan.priority.toUpperCase();
@@ -313,7 +320,12 @@ function renderWorldModel(model) {
     planAvoidZones.textContent = plan.avoidZones.join(', ') || 'Нет';
     planSafeZones.textContent = plan.safeZones.join(', ') || 'Свой лес, база';
 
-    if (plan.status === 'violated') {
+    if (plan.status === 'completed') {
+      planStatusBadge.className = 'plan-status-badge active';
+      planStatusBadge.style.borderColor = '#f6c042';
+      planStatusBadge.style.color = '#f6c042';
+      planStatusBadge.textContent = 'ЦЕЛЬ ВЫПОЛНЕНА 🎯';
+    } else if (plan.status === 'violated') {
       planStatusBadge.className = 'plan-status-badge violated';
       planStatusBadge.textContent = '⚠️ ПЛАН НАРУШЕН (ОПАСНАЯ ЗОНА)';
     } else {
