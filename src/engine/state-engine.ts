@@ -9,6 +9,8 @@ import {
   KeyCooldowns,
   ZoneAllegiance,
   ZoneKind,
+  NetworthSource,
+  EpistemicStatus,
 } from './world-model';
 
 interface HistorySnapshot {
@@ -164,13 +166,13 @@ export const calculateExpectedNetworth = calculateHeuristicNetworthCurve;
 export function parseTowerCounts(
   buildings: any,
   isRadiantPlayer: boolean
-): { alliedTowers: number; enemyTowers: number; hasTowerData: boolean } {
+): { alliedTowers: number | null; enemyTowers: number | null; hasTowerData: boolean } {
   let radiant = 0;
   let dire = 0;
   let foundAnyTower = false;
 
   if (!buildings || typeof buildings !== 'object') {
-    return { alliedTowers: 11, enemyTowers: 11, hasTowerData: false };
+    return { alliedTowers: null, enemyTowers: null, hasTowerData: false };
   }
 
   function scan(node: any, currentTeam?: 'radiant' | 'dire') {
@@ -202,7 +204,7 @@ export function parseTowerCounts(
   scan(buildings);
 
   if (!foundAnyTower) {
-    return { alliedTowers: 11, enemyTowers: 11, hasTowerData: false };
+    return { alliedTowers: null, enemyTowers: null, hasTowerData: false };
   }
 
   return {
@@ -259,27 +261,56 @@ export class StateEngine {
     model.player.zoneInfo = zoneInfo;
     model.player.coordinates = { x, y };
 
-    // 3. True Net Worth Calculation
+    // 3. Net Worth Calculation & Epistemic Provenance
     const bbCost = hero.buyback_cost ?? 0;
     let trueNetworth = 0;
-    if (bbCost >= 200) {
+    let networthSource: NetworthSource = 'current_gold_floor';
+    let networthConfidence = 0.2;
+    let epistemicStatus: EpistemicStatus = 'INFERRED';
+
+    if (player.net_worth || (player as any).networth) {
+      trueNetworth = player.net_worth || (player as any).networth;
+      networthSource = 'gsi_reported';
+      networthConfidence = 1.0;
+      epistemicStatus = 'KNOWN';
+    } else if (bbCost >= 200) {
       trueNetworth = (bbCost - 200) * 13;
+      networthSource = 'buyback_reconstructed';
+      networthConfidence = 0.7;
+      epistemicStatus = 'INFERRED';
     } else {
       const earned =
         (player.gold_from_hero_kills ?? 0) +
         (player.gold_from_creep_kills ?? 0) +
         (player.gold_from_income ?? 0) +
         (player.gold_from_shared ?? 0);
-      trueNetworth = earned > 0 ? earned : (player.gold ?? 0);
+      if (earned > 0) {
+        trueNetworth = earned;
+        networthSource = 'earned_gold_fallback';
+        networthConfidence = 0.45;
+        epistemicStatus = 'INFERRED';
+      } else {
+        trueNetworth = player.gold ?? 0;
+        networthSource = 'current_gold_floor';
+        networthConfidence = 0.2;
+        epistemicStatus = 'INFERRED';
+      }
     }
-    if (player.net_worth) trueNetworth = player.net_worth;
-    if ((player as any).networth) trueNetworth = (player as any).networth;
     if ((player.gold ?? 0) > trueNetworth) {
       trueNetworth = player.gold ?? 0;
     }
 
+    model.player.networth = trueNetworth;
+    model.player.networthDetails = {
+      value: trueNetworth,
+      source: networthSource,
+      confidence: networthConfidence,
+      epistemicStatus,
+    };
     model.player.heroName = hero.name || '';
-    model.player.heroCleanName = hero.name ? hero.name.replace('npc_dota_hero_', '').replace(/_/g, ' ') : 'Не выбран';
+    model.player.heroCleanName = hero.name
+      ? hero.name.replace('npc_dota_hero_', '').replace(/_/g, ' ')
+      : 'Не выбран';
     model.player.level = hero.level || 1;
     model.player.alive = hero.alive ?? true;
     model.player.respawnSeconds = hero.respawn_seconds ?? 0;
@@ -290,7 +321,6 @@ export class StateEngine {
     model.player.maxMana = hero.max_mana ?? 1;
     model.player.manaPercent = hero.mana_percent ?? 100;
     model.player.gold = player.gold ?? 0;
-    model.player.networth = trueNetworth;
     model.player.kda = {
       kills: player.kills ?? 0,
       deaths: player.deaths ?? 0,
@@ -408,19 +438,39 @@ export class StateEngine {
     const isRadiant = teamName === 'radiant';
     if (raw.buildings) {
       const towerStats = parseTowerCounts(raw.buildings, isRadiant);
-      if (towerStats.hasTowerData) {
-        model.mapControl.alliedTowersAlive = towerStats.alliedTowers;
-        model.mapControl.enemyTowersAlive = towerStats.enemyTowers;
-      }
+      model.mapControl.towerDataAvailable = towerStats.hasTowerData;
+      model.mapControl.alliedTowersAlive = towerStats.alliedTowers;
+      model.mapControl.enemyTowersAlive = towerStats.enemyTowers;
+    } else {
+      model.mapControl.towerDataAvailable = false;
+      model.mapControl.alliedTowersAlive = null;
+      model.mapControl.enemyTowersAlive = null;
     }
 
-    if (isRadiant) {
-      model.mapControl.currentSafeFarmZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle'];
-      model.mapControl.dangerousZones = ['Dire Base', 'Dire Triangle', 'Dire Main Jungle', 'Roshan Pit Area (River)'];
+    if (raw.map?.roshan_state) {
+      const rState = String(raw.map.roshan_state).toLowerCase();
+      if (rState.includes('alive')) {
+        model.mapControl.roshanStatus = 'alive';
+        model.mapControl.roshanStatusEpistemic = 'KNOWN';
+      } else if (rState.includes('dead') || rState.includes('respawn')) {
+        model.mapControl.roshanStatus = 'dead';
+        model.mapControl.roshanStatusEpistemic = 'KNOWN';
+      }
     } else {
-      model.mapControl.currentSafeFarmZones = ['Dire Base', 'Dire Triangle', 'Dire Main Jungle'];
-      model.mapControl.dangerousZones = ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle', 'Roshan Pit Area (River)'];
+      model.mapControl.roshanStatus = 'unknown';
+      model.mapControl.roshanStatusEpistemic = 'UNKNOWN';
     }
+
+    const baseAllied = isRadiant
+      ? ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle']
+      : ['Dire Base', 'Dire Triangle', 'Dire Main Jungle'];
+    const baseEnemy = isRadiant
+      ? ['Dire Base', 'Dire Triangle', 'Dire Main Jungle', 'Roshan Pit Area (River)']
+      : ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle', 'Roshan Pit Area (River)'];
+
+    model.mapControl.lowerRiskZones = baseAllied;
+    model.mapControl.currentSafeFarmZones = baseAllied;
+    model.mapControl.dangerousZones = baseEnemy;
 
     // 10. Update Enemy Trackers via ObservationCollector & Ingest Draft Heroes
     const collector = ObservationCollector.getInstance();
@@ -479,6 +529,7 @@ export class StateEngine {
 
     collector.updateClock(clock);
     model.enemies = collector.getObservationsRecord();
+    model.anonymousContacts = collector.getAnonymousContacts();
 
     return model;
   }

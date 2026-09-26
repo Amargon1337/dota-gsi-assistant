@@ -62,10 +62,24 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     if (!this.isEvaluatingLaya && now - this.lastLayaEvaluationTime > 2500) {
       this.isEvaluatingLaya = true;
       this.lastLayaEvaluationTime = now;
+      const dispatchRevision = model.meta.revision;
+      const dispatchMatchId = model.meta.matchId;
 
       LayaClient.evaluateWorldModel(model)
         .then((layaResult: LayaCognitiveResult) => {
-          model.leyaState = {
+          const currentModel = this.worldModelStore.getModel();
+
+          // Guard against stale async inferences across match boundaries or excessive state drift (>12 revisions)
+          if (currentModel.meta.matchId !== dispatchMatchId) {
+            console.log(`[Laya Invariant] Отклонен устаревший вывод Laya: матч изменился (${dispatchMatchId} -> ${currentModel.meta.matchId})`);
+            return;
+          }
+          if (Math.abs(currentModel.meta.revision - dispatchRevision) > 12) {
+            console.log(`[Laya Invariant] Отклонен устаревший вывод Laya: ревизия мира ушла вперед на ${currentModel.meta.revision - dispatchRevision} тиков`);
+            return;
+          }
+
+          currentModel.leyaState = {
             lastInferenceLatencyMs: layaResult.latencyMs,
             operationalPicture:
               layaResult.planSafety === 'critical_violation'

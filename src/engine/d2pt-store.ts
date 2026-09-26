@@ -146,7 +146,7 @@ export class D2PTDataStore {
     goldRemaining: number;
     timingStatus: 'ahead' | 'on_time' | 'delayed' | null;
     d2ptAvailable: boolean;
-    recommendationSource: 'd2pt' | 'none';
+    recommendationSource: 'd2pt_fresh' | 'd2pt_stale' | 'd2pt_outdated_patch' | 'none';
   } {
     const meta = this.getHeroMeta(heroName);
     const minute = Math.max(0, Math.floor(gameClockSeconds / 60));
@@ -193,7 +193,7 @@ export class D2PTDataStore {
         goldRemaining: 0,
         timingStatus: null,
         d2ptAvailable: true,
-        recommendationSource: 'd2pt',
+        recommendationSource: meta.isStale ? 'd2pt_stale' : 'd2pt_fresh',
       };
     }
 
@@ -202,13 +202,16 @@ export class D2PTDataStore {
     if (minute < nextItem.expectedMinute - 2) timingStatus = 'ahead';
     else if (minute > nextItem.expectedMinute + 3) timingStatus = 'delayed';
 
+    const recSource: 'd2pt_fresh' | 'd2pt_stale' | 'd2pt_outdated_patch' | 'none' =
+      meta.isStale ? 'd2pt_stale' : 'd2pt_fresh';
+
     return {
       targetItem: nextItem,
       alreadyPurchased,
       goldRemaining,
       timingStatus,
       d2ptAvailable: true,
-      recommendationSource: 'd2pt',
+      recommendationSource: recSource,
     };
   }
 

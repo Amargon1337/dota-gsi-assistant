@@ -12,11 +12,11 @@ import { GameSessionManager } from './game-session';
 export class EventEngine extends EventEmitter {
   private lastPlayerZone = '';
   private lastHeroAlive = true;
-  private lastTowersAlive = 11;
+  private lastTowersAlive: number | null = null;
   private alertedMissingEnemies: Set<string> = new Set();
   private knownPlayerItems: Set<string> = new Set();
   private eventCooldowns: Map<string, number> = new Map();
-  private lastRoshanStatus = 'alive';
+  private lastRoshanStatus = 'unknown';
 
   constructor() {
     super();
@@ -26,11 +26,11 @@ export class EventEngine extends EventEmitter {
   public reset(): void {
     this.lastPlayerZone = '';
     this.lastHeroAlive = true;
-    this.lastTowersAlive = 11;
+    this.lastTowersAlive = null;
     this.alertedMissingEnemies.clear();
     this.knownPlayerItems.clear();
     this.eventCooldowns.clear();
-    this.lastRoshanStatus = 'alive';
+    this.lastRoshanStatus = 'unknown';
     console.log('[EVENT] Состояние EventEngine, кулдауны и фильтры событий полностью сброшены');
   }
 
@@ -82,20 +82,27 @@ export class EventEngine extends EventEmitter {
     }
     this.lastHeroAlive = model.player.alive;
 
-    // 4. Tower Destruction Detection
-    if (this.lastTowersAlive > model.mapControl.alliedTowersAlive) {
-      const diff = this.lastTowersAlive - model.mapControl.alliedTowersAlive;
-      this.pushEvent(model, {
-        id: `tower_down_${clock}`,
-        clockTime: clock,
-        formattedTime: formatted,
-        type: 'TOWER_DESTROYED',
-        severity: 'warning',
-        description: `Потеряно союзных вышек: ${diff}. Контроль карты смещен к базе.`,
-      });
-      this.emit('tower_destroyed', { diff, remaining: model.mapControl.alliedTowersAlive });
+    // 4. Tower Destruction Detection (only when tower data is available and non-null)
+    if (model.mapControl.alliedTowersAlive !== null) {
+      if (this.lastTowersAlive === null) {
+        // Initial observation: sync baseline without firing spurious alerts
+        this.lastTowersAlive = model.mapControl.alliedTowersAlive;
+      } else if (this.lastTowersAlive > model.mapControl.alliedTowersAlive) {
+        const diff = this.lastTowersAlive - model.mapControl.alliedTowersAlive;
+        this.pushEvent(model, {
+          id: `tower_down_${clock}`,
+          clockTime: clock,
+          formattedTime: formatted,
+          type: 'TOWER_DESTROYED',
+          severity: 'warning',
+          description: `Потеряно союзных вышек: ${diff}. Контроль карты смещен к базе.`,
+        });
+        this.emit('tower_destroyed', { diff, remaining: model.mapControl.alliedTowersAlive });
+        this.lastTowersAlive = model.mapControl.alliedTowersAlive;
+      } else {
+        this.lastTowersAlive = model.mapControl.alliedTowersAlive;
+      }
     }
-    this.lastTowersAlive = model.mapControl.alliedTowersAlive;
 
     // 5. New Item Power Spike
     for (const item of model.player.inventory) {
@@ -115,30 +122,34 @@ export class EventEngine extends EventEmitter {
       }
     }
 
-    // 6. Roshan Status Alert Lifecycle
-    if (this.lastRoshanStatus !== model.mapControl.roshanStatus) {
-      if (model.mapControl.roshanStatus === 'dead') {
-        this.pushEvent(model, {
-          id: `roshan_killed_${clock}`,
-          clockTime: clock,
-          formattedTime: formatted,
-          type: 'ROSHAN_ALERT',
-          severity: 'warning',
-          description: '🐉 Рошан повержен! Запущен таймер респавна (8–11 мин).',
-        });
-        this.emit('roshan_transition', { status: 'dead', clock });
-      } else if (model.mapControl.roshanStatus === 'alive') {
-        this.pushEvent(model, {
-          id: `roshan_respawned_${clock}`,
-          clockTime: clock,
-          formattedTime: formatted,
-          type: 'ROSHAN_ALERT',
-          severity: 'info',
-          description: '🐉 Рошан возродился! Логово активно.',
-        });
-        this.emit('roshan_transition', { status: 'alive', clock });
+    // 6. Roshan Status Alert Lifecycle (only between known factual transitions)
+    if (model.mapControl.roshanStatus !== 'unknown') {
+      if (this.lastRoshanStatus === 'unknown') {
+        this.lastRoshanStatus = model.mapControl.roshanStatus;
+      } else if (this.lastRoshanStatus !== model.mapControl.roshanStatus) {
+        if (model.mapControl.roshanStatus === 'dead') {
+          this.pushEvent(model, {
+            id: `roshan_killed_${clock}`,
+            clockTime: clock,
+            formattedTime: formatted,
+            type: 'ROSHAN_ALERT',
+            severity: 'warning',
+            description: '🐉 Рошан повержен! Запущен таймер респавна (8–11 мин).',
+          });
+          this.emit('roshan_transition', { status: 'dead', clock });
+        } else if (model.mapControl.roshanStatus === 'alive') {
+          this.pushEvent(model, {
+            id: `roshan_respawned_${clock}`,
+            clockTime: clock,
+            formattedTime: formatted,
+            type: 'ROSHAN_ALERT',
+            severity: 'info',
+            description: '🐉 Рошан возродился! Логово активно.',
+          });
+          this.emit('roshan_transition', { status: 'alive', clock });
+        }
+        this.lastRoshanStatus = model.mapControl.roshanStatus;
       }
-      this.lastRoshanStatus = model.mapControl.roshanStatus;
     }
 
     // 7. Missing Enemy Detection
@@ -290,14 +301,25 @@ export class EventEngine extends EventEmitter {
       evidenceList.push('Герой обездвижен / под сайленсом!');
     }
 
-    // Calibrated risk score [0.0, 1.0]
-    const riskScore = Math.min(0.99, Math.round((threatScore / 100) * 100) / 100);
+    // Anonymous Contacts Evaluation (Unidentified red blips from Minimap Vision)
+    if (model.anonymousContacts && model.anonymousContacts.length > 0) {
+      for (const contact of model.anonymousContacts) {
+        if (contact.freshness === 'fresh') {
+          threatScore += 12;
+          evidenceList.push(`Неопознанный контакт на миникарте в зоне «${contact.zoneName}»`);
+        }
+      }
+    }
+
+    // Heuristic risk score [0.0, 1.0] (expert weighted sum mapping, not a calibrated statistical probability)
+    const heuristicRiskScore = Math.min(0.99, Math.round((threatScore / 100) * 100) / 100);
+    const riskScore = heuristicRiskScore; // for backwards compatibility
 
     // Formulate Action State: NOW, WHY, UNTIL
     let nowAction: 'RETREAT' | 'FARM_SAFE' | 'PUSH_LANE' | 'TEAMFIGHT' | 'ROSHAN' = 'FARM_SAFE';
     let untilCondition = 'До получения ключевого артефакта';
 
-    if (riskScore >= 0.70 || (zoneInfo.allegiance === 'enemy' && isNight)) {
+    if (heuristicRiskScore >= 0.70 || (zoneInfo.allegiance === 'enemy' && isNight)) {
       nowAction = 'RETREAT';
       untilCondition = 'До выхода в союзный лес под вышки';
       threats.push({
@@ -305,11 +327,12 @@ export class EventEngine extends EventEmitter {
         level: 'critical',
         title: `Опасность перехвата (${missingDangerousEnemies.join(', ') || 'Вражеская зона'})`,
         riskScore,
+        heuristicRiskScore,
         recommendedAction: 'Немедленно отступите в безопасный союзный лес под вышки',
         evidence: evidenceList,
         timestampClock: clock,
       });
-    } else if (riskScore >= 0.40) {
+    } else if (heuristicRiskScore >= 0.40) {
       nowAction = 'FARM_SAFE';
       untilCondition = 'Пока враги не покажутся на линиях';
       threats.push({
@@ -317,6 +340,7 @@ export class EventEngine extends EventEmitter {
         level: 'high',
         title: 'Повышенный тактический риск позиции',
         riskScore,
+        heuristicRiskScore,
         recommendedAction: 'Держитесь ближе к союзным вышкам и не углубляйтесь вслепую',
         evidence: evidenceList,
         timestampClock: clock,
@@ -332,6 +356,7 @@ export class EventEngine extends EventEmitter {
       why: evidenceList.slice(0, 5),
       until: untilCondition,
       riskScore,
+      heuristicRiskScore,
     };
   }
 

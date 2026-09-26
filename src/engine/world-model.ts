@@ -1,6 +1,8 @@
 export type ZoneAllegiance = 'ally' | 'enemy' | 'neutral';
 export type ZoneKind = 'base' | 'jungle' | 'triangle' | 'river' | 'lane' | 'roshan' | 'neutral_area';
 
+export type EpistemicStatus = 'KNOWN' | 'UNKNOWN' | 'INFERRED';
+
 export interface MapZoneInfo {
   name: string;
   allegiance: ZoneAllegiance;
@@ -10,6 +12,30 @@ export interface MapZoneInfo {
 
 export type ObservationSource = 'gsi' | 'cv' | 'mock' | 'inferred' | 'unknown';
 export type DataFreshness = 'fresh' | 'stale' | 'expired';
+
+export interface AnonymousContact {
+  id: string;
+  x: number;
+  y: number;
+  zoneName: string;
+  source: 'cv_minimap_dot' | 'cv_contour' | 'inferred';
+  confidence: number;
+  clockTime: number;
+  freshness: DataFreshness;
+}
+
+export type NetworthSource =
+  | 'gsi_reported'
+  | 'buyback_reconstructed'
+  | 'earned_gold_fallback'
+  | 'current_gold_floor';
+
+export interface NetworthProvenance {
+  value: number;
+  source: NetworthSource;
+  confidence: number; // 1.0 for GSI, 0.7 for buyback, 0.45 for earned, 0.2 for floor
+  epistemicStatus: EpistemicStatus;
+}
 
 export interface EnemyHeroTracker {
   id?: number;
@@ -29,7 +55,7 @@ export interface EnemyHeroTracker {
   hasShadowBlade: boolean;
   threatScore: number; // 0 to 10
   observationSource: ObservationSource;
-  certainty: number; // 0.0 to 1.0 (calibrated or derived, not fake confidence)
+  certainty: number; // 0.0 to 1.0
   lastObservedAt: number; // Unix epoch ms
   freshness: DataFreshness;
 }
@@ -57,6 +83,8 @@ export interface StrategicPlan {
   guidanceText: string;
   certainty: number;
   status: PlanStatus;
+  recommendationSource?: 'd2pt_fresh' | 'd2pt_stale' | 'd2pt_outdated_patch' | 'gemini_strategic' | 'heuristic_default';
+  epistemicStatus?: EpistemicStatus;
   violationReason?: string;
   progressPercent?: number;
 }
@@ -65,7 +93,8 @@ export interface ThreatEvaluation {
   id: string;
   level: 'low' | 'medium' | 'high' | 'critical';
   title: string;
-  riskScore: number; // 0.0 to 1.0 (calibrated risk score, not pseudo-probability)
+  riskScore: number; // heuristic score for backwards compatibility
+  heuristicRiskScore: number; // 0.0 to 1.0 expert heuristic mapping, not a calibrated statistical probability
   recommendedAction: string;
   evidence: string[];
   timestampClock: number;
@@ -133,6 +162,7 @@ export interface TacticalActionState {
   why: string[];
   until: string;
   riskScore: number;
+  heuristicRiskScore: number;
 }
 
 export interface AdviceOutcomeRecord {
@@ -161,6 +191,7 @@ export interface AdviceOutcomeRecord {
 export interface SharedWorldModel {
   observationMode: 'player_gsi_fow_restricted' | 'spectator_gsi' | 'mock_simulation' | 'hybrid_gsi_cv';
   meta: {
+    revision: number;
     matchId: string;
     serverTime: number;
     clockTime: number;
@@ -184,6 +215,7 @@ export interface SharedWorldModel {
     manaPercent: number;
     gold: number;
     networth: number;
+    networthDetails?: NetworthProvenance;
     kda: { kills: number; deaths: number; assists: number };
     lastHits: number;
     denies: number;
@@ -203,17 +235,21 @@ export interface SharedWorldModel {
   };
   trends: EconomicTrends;
   enemies: Record<string, EnemyHeroTracker>;
+  anonymousContacts: AnonymousContact[];
   visionDraft?: {
     radiantHeroes: string[];
     direHeroes: string[];
     lastUpdated: number;
   };
   mapControl: {
-    alliedTowersAlive: number;
-    enemyTowersAlive: number;
-    roshanStatus: string;
+    towerDataAvailable: boolean;
+    alliedTowersAlive: number | null;
+    enemyTowersAlive: number | null;
+    roshanStatus: 'alive' | 'dead' | 'respawning' | 'unknown';
+    roshanStatusEpistemic: EpistemicStatus;
     roshanTimerSeconds: number;
     roshanSpawnWindow?: { minTime: number; maxTime: number };
+    lowerRiskZones: string[];
     currentSafeFarmZones: string[];
     dangerousZones: string[];
   };
@@ -238,6 +274,7 @@ export function createInitialWorldModel(): SharedWorldModel {
   return {
     observationMode: 'player_gsi_fow_restricted',
     meta: {
+      revision: 0,
       matchId: '',
       serverTime: Date.now(),
       clockTime: -90,
@@ -261,6 +298,12 @@ export function createInitialWorldModel(): SharedWorldModel {
       manaPercent: 100,
       gold: 600,
       networth: 600,
+      networthDetails: {
+        value: 600,
+        source: 'current_gold_floor',
+        confidence: 0.2,
+        epistemicStatus: 'INFERRED',
+      },
       kda: { kills: 0, deaths: 0, assists: 0 },
       lastHits: 0,
       denies: 0,
@@ -315,20 +358,25 @@ export function createInitialWorldModel(): SharedWorldModel {
       killsLast10m: 0,
     },
     enemies: {},
+    anonymousContacts: [],
     mapControl: {
-      alliedTowersAlive: 11,
-      enemyTowersAlive: 11,
-      roshanStatus: 'alive',
+      towerDataAvailable: false,
+      alliedTowersAlive: null,
+      enemyTowersAlive: null,
+      roshanStatus: 'unknown',
+      roshanStatusEpistemic: 'UNKNOWN',
       roshanTimerSeconds: 0,
+      lowerRiskZones: ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle'],
       currentSafeFarmZones: ['Radiant Base', 'Radiant Triangle', 'Radiant Main Jungle'],
       dangerousZones: ['Dire Base', 'Dire Triangle', 'Dire Main Jungle', 'River'],
     },
     threats: [],
     tacticalActionState: {
       now: 'FARM_SAFE',
-      why: ['Начальная фаза матча', 'Все союзные вышки целы'],
+      why: ['Начальная фаза матча', 'Ожидание первой оценки карты'],
       until: 'Достижение 6 уровня или покупка первого артефакта',
       riskScore: 0.1,
+      heuristicRiskScore: 0.1,
     },
     strategy: {
       activePlan: null,
@@ -362,6 +410,7 @@ export class WorldModelStore {
   }
 
   public updateModel(updater: (model: SharedWorldModel) => void): SharedWorldModel {
+    this.model.meta.revision = (this.model.meta.revision ?? 0) + 1;
     updater(this.model);
     return this.model;
   }

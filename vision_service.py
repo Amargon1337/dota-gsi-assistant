@@ -27,9 +27,11 @@ ITEM_ICONS_DIR = os.path.join(DATA_DIR, 'item_icons')
 HEROES_JSON = os.path.join(DATA_DIR, 'heroes.json')
 
 # Windows Desktop API
-user32 = ctypes.windll.user32
+user32 = getattr(ctypes, 'windll', None).user32 if hasattr(ctypes, 'windll') else None
 
 def attach_thread_desktop():
+    if not user32:
+        return False
     try:
         hdesk = user32.OpenInputDesktop(0, False, 0x01FF)
         if hdesk:
@@ -41,6 +43,9 @@ def attach_thread_desktop():
 
 def get_dota_window_rect():
     """Finds Dota 2 window client bounds, or defaults to 1920x1080 on primary monitor."""
+    if not user32:
+        return (0, 0, 1920, 1080, False)
+
     hwnd = user32.FindWindowW('Valve001', 'Dota 2')
     if not hwnd:
         hwnd = user32.FindWindowW(None, 'Dota 2')
@@ -193,19 +198,22 @@ class VisionAgent:
         except Exception as e:
             print(f'[VISION] Failed to setup enemies on server: {e}', flush=True)
 
-    def send_sightings(self, sightings):
-        """Sends minimap sightings to server."""
-        if not sightings:
+    def send_sightings(self, sightings=None, anonymous_contacts=None):
+        """Sends minimap sightings and anonymous contacts to server."""
+        if not sightings and not anonymous_contacts:
             return
-        payload = json.dumps(sightings).encode('utf-8')
+        payload = json.dumps({
+            'sightings': sightings or [],
+            'anonymousContacts': anonymous_contacts or []
+        }).encode('utf-8')
         try:
             req = urllib.request.Request(
-                f'{SERVER_BASE}/api/vision/sighting',
+                f'{SERVER_BASE}/api/vision/sightings',
                 data=payload,
                 headers={'Content-Type': 'application/json'}
             )
             urllib.request.urlopen(req, timeout=1.0)
-        except Exception as e:
+        except Exception:
             pass
 
     def send_heartbeat(self):
@@ -340,42 +348,44 @@ class VisionAgent:
                         'clockTime': self.clock_time
                     })
 
-        # 2. Color Segmentation for Dire / Enemy Red dots (Fallback/Complement)
-        if len(sightings) < len(self.current_enemies):
-            hsv = cv2.cvtColor(minimap_bgr, cv2.COLOR_BGR2HSV)
-            # Red color range (Dota enemy dots / hero arrows)
-            m1 = cv2.inRange(hsv, np.array([0, 120, 120]), np.array([10, 255, 255]))
-            m2 = cv2.inRange(hsv, np.array([170, 120, 120]), np.array([180, 255, 255]))
-            red_mask = m1 | m2
+        # 2. Color Segmentation for Dire / Enemy Red dots (Anonymous Contacts)
+        # Never arbitrarily assign an anonymous blip to a missing hero identity!
+        anonymous_contacts = []
+        hsv = cv2.cvtColor(minimap_bgr, cv2.COLOR_BGR2HSV)
+        # Red color range (Dota enemy dots / hero arrows)
+        m1 = cv2.inRange(hsv, np.array([0, 120, 120]), np.array([10, 255, 255]))
+        m2 = cv2.inRange(hsv, np.array([170, 120, 120]), np.array([180, 255, 255]))
+        red_mask = m1 | m2
 
-            contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for c in contours:
-                area = cv2.contourArea(c)
-                if 12 <= area <= 200: # Filter noise and huge UI frames
-                    M = cv2.moments(c)
-                    if M['m00'] > 0:
-                        cx = int(M['m10'] / M['m00'])
-                        cy = int(M['m01'] / M['m00'])
-                        world_x = round(-8200 + (cx / mw) * 16400)
-                        world_y = round(8200 - (cy / mh) * 16400)
+        contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            if 12 <= area <= 200: # Filter noise and huge UI frames
+                M = cv2.moments(c)
+                if M['m00'] > 0:
+                    cx = int(M['m10'] / M['m00'])
+                    cy = int(M['m01'] / M['m00'])
+                    world_x = round(-8200 + (cx / mw) * 16400)
+                    world_y = round(8200 - (cy / mh) * 16400)
 
-                        # Match to first missing enemy not already sighted
-                        sighted_names = [s['heroName'].replace('npc_dota_hero_', '') for s in sightings]
-                        candidate = next((h for h in self.current_enemies if h not in sighted_names), None)
-                        if candidate:
-                            last = self.last_sightings.get(candidate)
-                            if not last or (now - last[2] >= 1.0) or (abs(world_x - last[0]) > 250 or abs(world_y - last[1]) > 250):
-                                self.last_sightings[candidate] = (world_x, world_y, now)
-                                sightings.append({
-                                    'heroName': f'npc_dota_hero_{candidate}',
-                                    'x': world_x,
-                                    'y': world_y,
-                                    'confidence': 0.85,
-                                    'clockTime': self.clock_time
-                                })
+                    # Do not duplicate if already matched as a known hero icon
+                    is_near_identified = any(
+                        abs(world_x - s['x']) <= 350 and abs(world_y - s['y']) <= 350
+                        for s in sightings
+                    )
+                    if not is_near_identified:
+                        anon_id = f'anon_{round(world_x / 400)}_{round(world_y / 400)}'
+                        anonymous_contacts.append({
+                            'id': anon_id,
+                            'x': world_x,
+                            'y': world_y,
+                            'confidence': 0.75,
+                            'clockTime': self.clock_time,
+                            'source': 'cv_minimap_dot'
+                        })
 
-        if sightings:
-            self.send_sightings(sightings)
+        if sightings or anonymous_contacts:
+            self.send_sightings(sightings, anonymous_contacts)
 
     def send_scoreboard_update(self, updates):
         """Sends detected scoreboard items and levels to server."""

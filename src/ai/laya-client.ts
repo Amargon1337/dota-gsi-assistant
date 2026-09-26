@@ -4,11 +4,16 @@ import { ContextBuilder } from '../engine/context-builder';
 
 export type GankRiskLevel = 'safe' | 'caution' | 'dangerous' | 'critical';
 
+export const VALID_TACTICAL_ACTIONS = ['farm_safe', 'push_lane', 'roshan', 'teamfight', 'retreat'] as const;
+export const VALID_GANK_RISKS = ['safe', 'caution', 'dangerous', 'critical'] as const;
+export const VALID_PLAN_SAFETIES = ['safe', 'compromised', 'critical_violation'] as const;
+
 export interface LayaCognitiveResult {
   available: boolean;
   latencyMs: number;
   gankRiskLevel: GankRiskLevel;
-  riskScore: number; // 0.0 to 1.0 derived from model distribution
+  riskScore: number; // backwards compatibility
+  heuristicRiskScore: number; // 0.0 to 1.0 expert heuristic mapping, not a calibrated statistical probability
   tacticalAction: 'farm_safe' | 'push_lane' | 'roshan' | 'teamfight' | 'retreat';
   certainty: number; // 0.0 to 1.0
   planSafety: 'safe' | 'compromised' | 'critical_violation';
@@ -65,14 +70,26 @@ export class LayaClient {
       const json = await response.json();
       const answers = json.answers || {};
 
-      const tacticalAction = answers.tactical_action?.choice ?? 'farm_safe';
-      const gankChoice: GankRiskLevel = answers.gank_risk?.choice ?? 'safe';
-      const planSafety = answers.plan_safety?.choice ?? 'safe';
+      // Runtime Enum Validation against invalid model hallucinations
+      const rawTactical = answers.tactical_action?.choice;
+      const tacticalAction = (VALID_TACTICAL_ACTIONS as readonly string[]).includes(rawTactical)
+        ? (rawTactical as 'farm_safe' | 'push_lane' | 'roshan' | 'teamfight' | 'retreat')
+        : 'farm_safe';
+
+      const rawGank = answers.gank_risk?.choice;
+      const gankChoice: GankRiskLevel = (VALID_GANK_RISKS as readonly string[]).includes(rawGank)
+        ? (rawGank as GankRiskLevel)
+        : 'safe';
+
+      const rawSafety = answers.plan_safety?.choice;
+      const planSafety = (VALID_PLAN_SAFETIES as readonly string[]).includes(rawSafety)
+        ? (rawSafety as 'safe' | 'compromised' | 'critical_violation')
+        : 'safe';
 
       const actionConfidence = answers.tactical_action?.answer_confidence ?? answers.tactical_action?.confidence ?? 0.85;
       const gankProbabilities = answers.gank_risk?.probabilities || {};
 
-      // Calculate model-grounded riskScore from probability distribution
+      // Expert heuristic mapping from probability distribution (not a statistical calibration curve)
       let calculatedRiskScore = 0.15;
       if (gankChoice === 'critical') {
         calculatedRiskScore = 0.70 + (gankProbabilities.critical ?? 0.2) * 0.29;
@@ -85,12 +102,14 @@ export class LayaClient {
       }
 
       const certainty = Math.round(actionConfidence * 100) / 100;
+      const finalRisk = Math.round(calculatedRiskScore * 100) / 100;
 
       return {
         available: true,
         latencyMs: Date.now() - startTime,
         gankRiskLevel: gankChoice,
-        riskScore: Math.round(calculatedRiskScore * 100) / 100,
+        riskScore: finalRisk,
+        heuristicRiskScore: finalRisk,
         tacticalAction,
         certainty,
         planSafety,
@@ -138,6 +157,7 @@ export class LayaClient {
       latencyMs,
       gankRiskLevel,
       riskScore,
+      heuristicRiskScore: riskScore,
       tacticalAction,
       certainty: 0.80,
       planSafety,

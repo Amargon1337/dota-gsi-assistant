@@ -113,5 +113,44 @@ class TestVisionService(unittest.TestCase):
         self.assertGreaterEqual(rect[2], 800)
         self.assertGreaterEqual(rect[3], 600)
 
+    def test_minimap_red_dot_anonymous_contact(self):
+        # Create a synthetic minimap with a bright red blip
+        minimap = np.full((270, 270, 3), 35, dtype=np.uint8)
+        # Draw a 6x6 red dot at (150, 150)
+        cv2.circle(minimap, (150, 150), 3, (0, 0, 255), -1)
+
+        # Run red segmentation logic matching vision_service.py
+        hsv = cv2.cvtColor(minimap, cv2.COLOR_BGR2HSV)
+        m1 = cv2.inRange(hsv, np.array([0, 120, 120]), np.array([10, 255, 255]))
+        m2 = cv2.inRange(hsv, np.array([170, 120, 120]), np.array([180, 255, 255]))
+        red_mask = m1 | m2
+
+        contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        anonymous_contacts = []
+        mw, mh = 270, 270
+
+        for c in contours:
+            area = cv2.contourArea(c)
+            if 12 <= area <= 200:
+                M = cv2.moments(c)
+                if M['m00'] > 0:
+                    cx = int(M['m10'] / M['m00'])
+                    cy = int(M['m01'] / M['m00'])
+                    world_x = round(-8200 + (cx / mw) * 16400)
+                    world_y = round(8200 - (cy / mh) * 16400)
+                    anon_id = f'anon_{round(world_x / 400)}_{round(world_y / 400)}'
+                    anonymous_contacts.append({
+                        'id': anon_id,
+                        'x': world_x,
+                        'y': world_y,
+                        'confidence': 0.75,
+                        'source': 'cv_minimap_dot'
+                    })
+
+        self.assertEqual(len(anonymous_contacts), 1)
+        self.assertEqual(anonymous_contacts[0]['confidence'], 0.75)
+        self.assertEqual(anonymous_contacts[0]['source'], 'cv_minimap_dot')
+        self.assertNotIn('heroName', anonymous_contacts[0])
+
 if __name__ == '__main__':
     unittest.main()

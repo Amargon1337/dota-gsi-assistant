@@ -212,9 +212,9 @@ export class ItemIdentity {
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
-  public static getItemCost(raw: string): number {
+  public static getItemCost(raw: string): number | null {
     const id = this.normalizeItemId(raw);
-    return ITEM_REGISTRY[id]?.cost ?? 2000;
+    return ITEM_REGISTRY[id]?.cost ?? null;
   }
 
   /**

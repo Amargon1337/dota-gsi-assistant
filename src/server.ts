@@ -46,16 +46,23 @@ stateManager.on('state', (state) => {
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (
-        !origin ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        origin.startsWith('http://192.168.') ||
-        origin.startsWith('http://10.') ||
-        origin.startsWith('http://100.')
-      ) {
-        callback(null, true);
-      } else {
+      if (!origin) {
+        return callback(null, true);
+      }
+      try {
+        const parsed = new URL(origin);
+        const host = parsed.hostname;
+        const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+        const isPrivate10 = /^10\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host);
+        const isPrivate192 = /^192\.168\.(\d{1,3})\.(\d{1,3})$/.test(host);
+        const isPrivate100 = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host); // Tailscale / CGNAT
+        const isPrivate172 = /^172\.(1[6-9]|2[0-9]|3[0-1])\.(\d{1,3})\.(\d{1,3})$/.test(host);
+        if (isLocal || isPrivate10 || isPrivate192 || isPrivate100 || isPrivate172) {
+          callback(null, true);
+        } else {
+          callback(new Error('Blocked by CORS policy'));
+        }
+      } catch {
         callback(new Error('Blocked by CORS policy'));
       }
     },
@@ -210,17 +217,46 @@ app.post('/api/ai/ask', async (req: Request, res: Response) => {
 // 👁️ COMPUTER VISION INGESTION API (VAC-Safe)
 // ==========================================
 
-// Ingest enemy hero sightings detected on the minimap
-app.post('/api/vision/sighting', (req: Request, res: Response) => {
-  const sightings = Array.isArray(req.body) ? req.body : [req.body];
+// Ingest enemy hero sightings and anonymous contacts detected on the minimap
+app.post(['/api/vision/sighting', '/api/vision/sightings'], (req: Request, res: Response) => {
   const model = advisorService.getWorldModel();
   const currentClock = model.meta.clockTime;
   const playerTeam = model.player.team || 'radiant';
+  const collector = ObservationCollector.getInstance();
 
-  let recordedCount = 0;
-  for (const s of sightings) {
+  let heroSightings: any[] = [];
+  let anonymousContacts: any[] = [];
+
+  if (Array.isArray(req.body)) {
+    for (const item of req.body) {
+      if (!item) continue;
+      if (item.heroName) {
+        heroSightings.push(item);
+      } else if (item.x !== undefined && item.y !== undefined) {
+        anonymousContacts.push(item);
+      }
+    }
+  } else if (req.body && typeof req.body === 'object') {
+    if (Array.isArray(req.body.sightings)) {
+      heroSightings = req.body.sightings;
+    }
+    if (Array.isArray(req.body.anonymousContacts)) {
+      anonymousContacts = req.body.anonymousContacts;
+    }
+    // Single sighting object fallback
+    if (!req.body.sightings && !req.body.anonymousContacts) {
+      if (req.body.heroName) {
+        heroSightings.push(req.body);
+      } else if (req.body.x !== undefined && req.body.y !== undefined) {
+        anonymousContacts.push(req.body);
+      }
+    }
+  }
+
+  let recordedHeroes = 0;
+  for (const s of heroSightings) {
     if (!s || !s.heroName) continue;
-    ObservationCollector.getInstance().observeEnemy(
+    collector.observeEnemy(
       {
         heroName: s.heroName,
         x: s.x,
@@ -233,19 +269,42 @@ app.post('/api/vision/sighting', (req: Request, res: Response) => {
       },
       playerTeam
     );
-    recordedCount++;
+    recordedHeroes++;
   }
 
-  // Set observation mode to hybrid and refresh enemies record
+  let recordedAnon = 0;
+  for (const a of anonymousContacts) {
+    if (!a || a.x === undefined || a.y === undefined) continue;
+    collector.observeAnonymousContact(
+      {
+        id: a.id || a.contactId,
+        x: a.x,
+        y: a.y,
+        clockTime: a.clockTime ?? currentClock,
+        source: a.source || 'cv_minimap_dot',
+        confidence: a.confidence ?? 0.75,
+      },
+      playerTeam
+    );
+    recordedAnon++;
+  }
+
+  // Set observation mode to hybrid and refresh enemies and anonymous contacts
   model.observationMode = 'hybrid_gsi_cv';
-  model.enemies = ObservationCollector.getInstance().getObservationsRecord();
+  model.enemies = collector.getObservationsRecord();
+  model.anonymousContacts = collector.getAnonymousContacts();
 
   broadcast({
     type: 'WORLD_MODEL_UPDATE',
     model,
   });
 
-  res.json({ success: true, count: recordedCount, mode: model.observationMode });
+  res.json({
+    success: true,
+    count: recordedHeroes,
+    anonymousCount: recordedAnon,
+    mode: model.observationMode,
+  });
 });
 
 // Setup enemy team heroes (Quick match draft setup)

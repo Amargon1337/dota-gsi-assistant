@@ -147,6 +147,11 @@ export class GeminiGateway {
         };
       }
 
+      // Commit quota immediately on HTTP 200: Google API billed the quota
+      if (reservation.reservationId) {
+        budgetManager.commitReservation(reservation.reservationId);
+      }
+
       const json = await response.json();
       const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
 
@@ -156,9 +161,6 @@ export class GeminiGateway {
         parsedPlan = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
       } catch (parseErr: any) {
         console.error('[Gemini Gateway JSON Parse Error] Raw text was:', rawText);
-        if (reservation.reservationId) {
-          budgetManager.releaseReservation(reservation.reservationId);
-        }
         return {
           success: false,
           guidanceText: '⚠️ Модель Gemini вернула некорректный синтаксис JSON. План отклонён (Fail-Closed).',
@@ -173,9 +175,6 @@ export class GeminiGateway {
       const validation = this.validatePlanSchema(parsedPlan);
       if (!validation.valid) {
         console.error('[Gemini Gateway Schema Validation Failed]:', validation.errors);
-        if (reservation.reservationId) {
-          budgetManager.releaseReservation(reservation.reservationId);
-        }
         return {
           success: false,
           guidanceText: `⚠️ Ответ модели не соответствует контракту StrategicPlan: ${validation.errors.join('; ')}`,
@@ -189,9 +188,6 @@ export class GeminiGateway {
       // 4. Verification against already owned inventory items
       if (ItemIdentity.satisfiesRequirement(parsedPlan.targetItem, model.player.inventory)) {
         console.warn(`[Gemini Gateway] Модель предложила уже купленный предмет: "${parsedPlan.targetItem}"`);
-        if (reservation.reservationId) {
-          budgetManager.releaseReservation(reservation.reservationId);
-        }
         return {
           success: false,
           guidanceText: `⚠️ План отклонён: предложенный предмет «${parsedPlan.targetItem}» уже есть в инвентаре игрока.`,
@@ -200,11 +196,6 @@ export class GeminiGateway {
           error: 'INVALID_MODEL_OUTPUT',
           errorDetails: `Model recommended already owned item: ${parsedPlan.targetItem}`,
         };
-      }
-
-      // 5. Successful plan creation: commit budget slot consumption
-      if (reservation.reservationId) {
-        budgetManager.commitReservation(reservation.reservationId);
       }
 
       const strategicPlan: StrategicPlan = {

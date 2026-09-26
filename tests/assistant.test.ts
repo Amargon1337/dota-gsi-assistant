@@ -528,7 +528,7 @@ test('Q. Gemini Gateway Fail-Closed on Malformed JSON & Schema Errors', async ()
   try {
     const initialUsed = bm.getStatus().rpmUsed;
 
-    // 1. Mock fetch returning broken JSON
+    // 1. Mock fetch returning broken JSON (HTTP 200 -> Google billed quota -> reservation committed)
     global.fetch = (async () => {
       return {
         ok: true,
@@ -542,10 +542,10 @@ test('Q. Gemini Gateway Fail-Closed on Malformed JSON & Schema Errors', async ()
     const brokenJsonResult = await GeminiGateway.generateStrategicPlan(model, 'Test broken JSON');
     assert.equal(brokenJsonResult.success, false);
     assert.equal(brokenJsonResult.error, 'INVALID_MODEL_OUTPUT');
-    // Verify budget reservation was released
-    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+    // Verify budget reservation was COMMITTED because HTTP 200 was billed by Google API
+    assert.equal(bm.getStatus().rpmUsed, initialUsed + 1);
 
-    // 2. Mock fetch returning valid JSON but missing required fields
+    // 2. Mock fetch returning valid JSON but missing required fields (HTTP 200 -> committed)
     global.fetch = (async () => {
       return {
         ok: true,
@@ -559,10 +559,10 @@ test('Q. Gemini Gateway Fail-Closed on Malformed JSON & Schema Errors', async ()
     const schemaFailResult = await GeminiGateway.generateStrategicPlan(model, 'Test invalid schema');
     assert.equal(schemaFailResult.success, false);
     assert.equal(schemaFailResult.error, 'INVALID_MODEL_OUTPUT');
-    // Verify budget reservation was released
-    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+    // Verify budget reservation was committed
+    assert.equal(bm.getStatus().rpmUsed, initialUsed + 2);
 
-    // 3. Mock fetch returning plan that recommends an item already owned in inventory ('Manta Style')
+    // 3. Mock fetch returning plan that recommends an item already owned in inventory (HTTP 200 -> committed)
     global.fetch = (async () => {
       return {
         ok: true,
@@ -596,8 +596,23 @@ test('Q. Gemini Gateway Fail-Closed on Malformed JSON & Schema Errors', async ()
     assert.equal(ownedItemResult.success, false);
     assert.equal(ownedItemResult.error, 'INVALID_MODEL_OUTPUT');
     assert.ok(ownedItemResult.guidanceText?.includes('уже есть в инвентаре'));
-    // Verify budget reservation was released
-    assert.equal(bm.getStatus().rpmUsed, initialUsed);
+    // Verify budget reservation was committed
+    assert.equal(bm.getStatus().rpmUsed, initialUsed + 3);
+
+    // 4. Mock fetch returning HTTP 500 error (HTTP !ok -> reservation released)
+    global.fetch = (async () => {
+      return {
+        ok: false,
+        status: 500,
+        text: async () => 'Internal Server Error',
+      } as any;
+    }) as any;
+
+    const serverErrorResult = await GeminiGateway.generateStrategicPlan(model, 'Test 500 error');
+    assert.equal(serverErrorResult.success, false);
+    assert.equal(serverErrorResult.error, 'NETWORK_ERROR');
+    // Verify budget reservation was RELEASED (rpmUsed unchanged from +3)
+    assert.equal(bm.getStatus().rpmUsed, initialUsed + 3);
   } finally {
     global.fetch = originalFetch;
     cfg.geminiApiKey = originalKey;
@@ -968,6 +983,169 @@ test('Z. Scoreboard Vision Threat Item Spikes and Level Spikes Ingestion', () =>
   GameSessionManager.getInstance().fullReset('match_scoreboard_test');
   const freshObs = collector.getObservationsRecord();
   assert.equal(Object.keys(freshObs).length, 0);
+});
+
+test('AA. Anonymous Contacts Minimap Ingestion & Spatial Tracking', () => {
+  const collector = ObservationCollector.getInstance();
+  collector.reset();
+
+  // Ingest unidentified red dots as anonymous contacts
+  const contact1 = collector.observeAnonymousContact({
+    id: 'anon_1',
+    x: 1000,
+    y: 1000,
+    clockTime: 300,
+    confidence: 0.75,
+  }, 'radiant');
+
+  assert.equal(contact1.id, 'anon_1');
+  assert.equal(contact1.source, 'cv_minimap_dot');
+  assert.equal(contact1.confidence, 0.75);
+  assert.equal(contact1.freshness, 'fresh');
+  assert.ok(contact1.zoneName);
+
+  const contacts = collector.getAnonymousContacts();
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].id, 'anon_1');
+
+  // Verify that anonymous contacts do NOT register as identified enemy heroes
+  const heroes = collector.getObservationsRecord();
+  assert.equal(Object.keys(heroes).length, 0);
+
+  // Advancing clock by 15s marks contact as stale (>10s)
+  collector.updateClock(315);
+  const staleContacts = collector.getAnonymousContacts();
+  assert.equal(staleContacts.length, 1);
+  assert.equal(staleContacts[0].freshness, 'stale');
+
+  // Advancing clock by >30s purges expired anonymous contacts
+  collector.updateClock(335);
+  const purgedContacts = collector.getAnonymousContacts();
+  assert.equal(purgedContacts.length, 0);
+});
+
+test('AB. Epistemic Honesty: Missing Towers Are null and Roshan Is unknown', () => {
+  const engine = new StateEngine();
+  const rawEmptyBuildings: GsiRawPayload = {
+    provider: { name: 'Dota 2', appid: 570, version: 1, timestamp: 100 },
+    map: { clock_time: 50, game_state: 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS', daytime: true },
+    player: { team_name: 'radiant', gold: 600, net_worth: 600 },
+    hero: { xpos: 0, ypos: 0, alive: true },
+    // No buildings object and no roshan_state provided
+  };
+
+  const processedState = new StateManager().update(rawEmptyBuildings);
+  const worldModel = engine.process(rawEmptyBuildings, processedState);
+
+  // Towers must be null (not 11) when data is missing from GSI
+  assert.equal(worldModel.mapControl.towerDataAvailable, false);
+  assert.equal(worldModel.mapControl.alliedTowersAlive, null);
+  assert.equal(worldModel.mapControl.enemyTowersAlive, null);
+
+  // Roshan must be 'unknown' and EpistemicStatus 'UNKNOWN'
+  assert.equal(worldModel.mapControl.roshanStatus, 'unknown');
+  assert.equal(worldModel.mapControl.roshanStatusEpistemic, 'UNKNOWN');
+});
+
+test('AC. Out-of-Order Clock Protection and Source Priority in ObservationCollector', () => {
+  const collector = ObservationCollector.getInstance();
+  collector.reset();
+
+  // 1. High priority GSI observation at clock 500
+  collector.observeEnemy({
+    heroName: 'npc_dota_hero_axe',
+    clockTime: 500,
+    source: 'gsi',
+    level: 10,
+    items: ['item_blink'],
+  });
+
+  const axe = collector.getObservationsRecord()['npc_dota_hero_axe'];
+  assert.equal(axe.lastSeenClockTime, 500);
+  assert.equal(axe.observationSource, 'gsi');
+
+  // 2. Out-of-order stale CV observation from clock 450 should be IGNORED
+  collector.observeEnemy({
+    heroName: 'npc_dota_hero_axe',
+    clockTime: 450,
+    source: 'cv',
+    level: 9,
+    items: [],
+  });
+
+  const axeAfterStale = collector.getObservationsRecord()['npc_dota_hero_axe'];
+  assert.equal(axeAfterStale.lastSeenClockTime, 500);
+  assert.equal(axeAfterStale.level, 10);
+  assert.equal(axeAfterStale.observationSource, 'gsi');
+
+  // 3. Lower priority source at same clock does not overwrite higher priority source
+  collector.observeEnemy({
+    heroName: 'npc_dota_hero_axe',
+    clockTime: 500,
+    source: 'inferred',
+    level: 8,
+    items: [],
+  });
+  const axePriority = collector.getObservationsRecord()['npc_dota_hero_axe'];
+  assert.equal(axePriority.observationSource, 'gsi');
+});
+
+test('AD. Honest Financials: Unknown Items Return null and D2PT Freshness', () => {
+  // Unknown item should return null instead of a fabricated 2000 gold
+  const unknownCost = ItemIdentity.getItemCost('item_completely_unknown_imaginary_item');
+  assert.equal(unknownCost, null);
+
+  const blinkCost = ItemIdentity.getItemCost('item_blink');
+  assert.equal(blinkCost, 2250);
+
+  // D2PT recommendations distinguish fresh vs stale
+  const meta = D2PTDataStore.getHeroMeta('npc_dota_hero_antimage');
+  assert.ok(meta);
+  const rec = D2PTDataStore.determineNextTargetItem('npc_dota_hero_antimage', [], 1000, 300);
+  assert.equal(rec.recommendationSource, 'd2pt_fresh');
+});
+
+test('AE. CORS Origin URL Hostname Parsing Security', () => {
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:8080',
+    'http://192.168.1.50:3000',
+    'http://10.0.0.5:3000',
+    'http://100.64.0.1:3000',
+    'http://172.16.0.1:3000',
+    'http://172.31.255.255:3000',
+  ];
+
+  const blockedOrigins = [
+    'http://evil-localhost.com',
+    'http://localhost.attacker.com',
+    'http://192.168.1.50.attacker.com',
+    'http://172.32.0.1:3000',
+    'http://attacker.com',
+  ];
+
+  const isOriginAllowed = (origin: string): boolean => {
+    try {
+      const parsed = new URL(origin);
+      const host = parsed.hostname;
+      const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      const isPrivate10 = /^10\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host);
+      const isPrivate192 = /^192\.168\.(\d{1,3})\.(\d{1,3})$/.test(host);
+      const isPrivate100 = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host);
+      const isPrivate172 = /^172\.(1[6-9]|2[0-9]|3[0-1])\.(\d{1,3})\.(\d{1,3})$/.test(host);
+      return isLocal || isPrivate10 || isPrivate192 || isPrivate100 || isPrivate172;
+    } catch {
+      return false;
+    }
+  };
+
+  for (const origin of allowedOrigins) {
+    assert.equal(isOriginAllowed(origin), true, `Should allow valid origin: ${origin}`);
+  }
+
+  for (const origin of blockedOrigins) {
+    assert.equal(isOriginAllowed(origin), false, `Should reject suspicious origin: ${origin}`);
+  }
 });
 
 
