@@ -9,6 +9,7 @@ import { GeminiBudgetManager } from './gemini-budget-manager';
 import { DecisionRouter, DecisionTrigger } from './decision-router';
 import { GameSessionManager, SessionResettable } from '../engine/game-session';
 import { ProcessedGameState, GsiRawPayload } from '../types/gsi';
+import { LayaIntelligenceService } from '../engine/laya-intelligence';
 
 export class AdvisorService extends EventEmitter implements SessionResettable {
   private static instance: AdvisorService;
@@ -17,6 +18,8 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
   private worldModelStore = WorldModelStore.getInstance();
   private budgetManager = GeminiBudgetManager.getInstance();
   private decisionRouter = DecisionRouter.getInstance();
+  private layaIntelligence = LayaIntelligenceService.getInstance();
+  private lastPostGameSummaryMatch = '';
 
   private lastGeminiCallTime = 0;
   private isEvaluatingLaya = false;
@@ -32,6 +35,9 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     // Wire EventEngine semantic events for dashboard stream (NOT for Gemini)
     this.eventEngine.on('event', (ev) => {
       this.emit('semantic_event', ev);
+      void this.layaIntelligence.handleEvent(this.worldModelStore.getModel(), ev).then(() => {
+        this.emit('laya_intelligence', this.layaIntelligence.getState());
+      }).catch((err) => console.error('[Laya Intelligence Error]', err));
     });
   }
 
@@ -57,49 +63,39 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     // 2. Event Engine Evaluation (updates world model & produces dashboard semantic events)
     this.eventEngine.evaluate(model);
 
-    // 3. System-1 Realtime Cognition via Laya (strictly local inference, throttled to 2.5s, NEVER calls Gemini)
+    // 3. Baseline System-1 cognition remains available, but event intelligence is the
+    // primary path for important transitions. This keeps the dashboard's existing LAYA_UPDATE contract.
     const now = Date.now();
-    if (!this.isEvaluatingLaya && now - this.lastLayaEvaluationTime > 2500) {
+    if (!this.isEvaluatingLaya && now - this.lastLayaEvaluationTime > 5000) {
       this.isEvaluatingLaya = true;
       this.lastLayaEvaluationTime = now;
       const dispatchRevision = model.meta.revision;
       const dispatchMatchId = model.meta.matchId;
-
       LayaClient.evaluateWorldModel(model)
         .then((layaResult: LayaCognitiveResult) => {
           const currentModel = this.worldModelStore.getModel();
-
-          // Guard against stale async inferences across match boundaries or excessive state drift (>12 revisions)
-          if (currentModel.meta.matchId !== dispatchMatchId) {
-            console.log(`[Laya Invariant] Отклонен устаревший вывод Laya: матч изменился (${dispatchMatchId} -> ${currentModel.meta.matchId})`);
-            return;
-          }
-          if (Math.abs(currentModel.meta.revision - dispatchRevision) > 12) {
-            console.log(`[Laya Invariant] Отклонен устаревший вывод Laya: ревизия мира ушла вперед на ${currentModel.meta.revision - dispatchRevision} тиков`);
-            return;
-          }
-
+          if (currentModel.meta.matchId !== dispatchMatchId || Math.abs(currentModel.meta.revision - dispatchRevision) > 20) return;
           currentModel.leyaState = {
             lastInferenceLatencyMs: layaResult.latencyMs,
             operationalPicture:
-              layaResult.planSafety === 'critical_violation'
-                ? 'Критический риск! План скомпрометирован'
-                : layaResult.gankRiskLevel === 'critical' || layaResult.gankRiskLevel === 'dangerous'
-                ? 'Повышенная угроза ганка'
-                : 'Штатное развитие игры',
+              layaResult.planSafety === 'critical_violation' ? 'Критический риск! План скомпрометирован' :
+              layaResult.gankRiskLevel === 'critical' || layaResult.gankRiskLevel === 'dangerous' ? 'Повышенная угроза ганка' : 'Штатное развитие игры',
             immediateAction: layaResult.tacticalAction,
             riskScore: layaResult.riskScore,
           };
-
-          // Laya runs 100% autonomously: NEVER triggers Gemini
           this.emit('laya_cognition', layaResult);
         })
-        .catch((err) => {
-          console.error('[Laya Background Error]', err);
-        })
-        .finally(() => {
-          this.isEvaluatingLaya = false;
-        });
+        .catch((err) => console.error('[Laya Background Error]', err))
+        .finally(() => { this.isEvaluatingLaya = false; });
+    }
+
+    // Generate one post-game summary per match. Gemini is not involved.
+    if (raw.map?.game_state?.includes('POST_GAME') && this.lastPostGameSummaryMatch !== model.meta.matchId) {
+      this.lastPostGameSummaryMatch = model.meta.matchId;
+      void this.layaIntelligence.buildPostGameSummary(model).then((summary) => {
+        this.emit('laya_post_game', summary);
+        this.emit('laya_intelligence', this.layaIntelligence.getState());
+      }).catch((err) => console.error('[Laya Post-Game Error]', err));
     }
 
     // 4. Outcome Tracking Evaluation Loop (evaluates player trajectory after manual plans)
@@ -247,6 +243,7 @@ export class AdvisorService extends EventEmitter implements SessionResettable {
     this.lastGeminiCallTime = 0;
     this.isEvaluatingLaya = false;
     this.lastLayaEvaluationTime = 0;
+    this.lastPostGameSummaryMatch = '';
     this.stateEngine.reset();
     this.eventEngine.reset();
     this.decisionRouter.reset();
