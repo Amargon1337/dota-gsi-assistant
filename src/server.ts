@@ -12,6 +12,7 @@ import { AdvisorService } from './ai/advisor-service';
 import { GeminiBudgetManager } from './ai/gemini-budget-manager';
 import { ObservationCollector } from './gsi/observation-collector';
 import { GameSessionManager } from './engine/game-session';
+import { LayaIntelligenceService } from './engine/laya-intelligence';
 
 // Load configuration initially
 ConfigManager.load();
@@ -34,6 +35,7 @@ const stateManager = new StateManager();
 const mockStreamer = new MockStreamer(stateManager);
 const advisorService = AdvisorService.getInstance();
 const budgetManager = GeminiBudgetManager.getInstance();
+const layaIntelligence = LayaIntelligenceService.getInstance();
 
 // Connect AdvisorService to State updates with strict typing
 stateManager.on('state', (state) => {
@@ -151,6 +153,12 @@ app.get('/api/state', (_req: Request, res: Response) => {
 app.get('/api/model', (_req: Request, res: Response) => {
   res.json(advisorService.getWorldModel());
 });
+
+// Local Laya intelligence: event insights, death analysis, tilt signals and post-game review.
+app.get('/api/laya/intelligence', (_req: Request, res: Response) => {
+  res.json(layaIntelligence.getState());
+});
+
 
 app.post('/api/mock/toggle', (_req: Request, res: Response) => {
   if (mockStreamer.isActive()) {
@@ -746,6 +754,21 @@ advisorService.on('semantic_event', (event) => {
     event,
   });
 });
+
+advisorService.on('laya_intelligence', (intelligence) => {
+  broadcast({
+    type: 'LAYA_INTELLIGENCE',
+    intelligence,
+  });
+});
+
+advisorService.on('laya_post_game', (summary) => {
+  broadcast({
+    type: 'LAYA_POST_GAME',
+    summary,
+  });
+});
+
 
 function getLocalIpAddresses(): string[] {
   const interfaces = os.networkInterfaces();
